@@ -4,11 +4,6 @@ Alba Vilanova Cortezón · Jannis Fröhlking · Jonathan Bahlmann
 ## STEP 1: Set up the Google Drive Environment
 *Try to increase notebook speed by saving files to my Google Drive*
 
-Can you two also access it?
-* Jonathan: I can run this code and it works, but the files would then need to be loaded right?
-* Alba: I can run it too
-* test
-
 
 ```python
 from google.colab import drive
