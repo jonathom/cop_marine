@@ -1,5 +1,9 @@
 # Group Challenge
-Alba Vilanova Cortezón · Jannis Fröhlking · Jonathan Bahlmann
+Contributors:
+
+* Alba Vilanova Cortezón (https://github.com/albavilanova)
+* Jannis Fröhlking (https://github.com/JaFro96)
+* Jonathan Bahlmann (https://github.com/jonathom)
 
 ## STEP 1: Set up the Google Drive Environment
 *Try to increase notebook speed by saving files to my Google Drive*
