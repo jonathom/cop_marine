@@ -39,8 +39,6 @@ Dates
 # Define regional domain
 # Between Rio de Janeiro and Lisboa
 # bbox = ((-9, 22), (-46, 38))
-# Alba: It does not work: I don't know how to consider west (negative) coordinates! 
-# We should figure that out or change it
 
 # Baltic sea
 bbox = ((10, 54),(30, 65))
