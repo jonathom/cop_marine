@@ -5,51 +5,42 @@ Contributors:
 * Jannis Fröhlking (https://github.com/JaFro96)
 * Jonathan Bahlmann (https://github.com/jonathom)
 
-## STEP 1: Set up the Google Drive Environment
-*Try to increase notebook speed by saving files to my Google Drive*
+# Data collection
 
 
 ```python
-from google.colab import drive
-drive.mount('/content/drive')
-```
+# Imports 
 
-    Mounted at /content/drive
-
-
-
-```python
-# Leave that out to save files in running time
+import requests
+import zipfile
 import os
-os.chdir("/content/drive/MyDrive")
+import pandas as pd
+import ftplib
+import os
+from getpass import getpass
+import xarray as xr
+import numpy as np
 ```
 
-## STEP 2: Collect Data
+## STEP 1: Collect data
 
-### AIS
-Dates
+AIS and CMEMS data for the model on:
 
 * 01.01.2020
 * 01.04.2020
 * 01.07.2020
 * 01.10.2020
 
+CMEMS data for the routing on:
+* 01.06.2021
+* 02.06.2021
+* 03.06.2021
 
-```python
-# Define regional domain
-# Between Rio de Janeiro and Lisboa
-# bbox = ((-9, 22), (-46, 38))
-
-# Baltic sea
-bbox = ((10, 54),(30, 65))
-```
+### Model data - AIS
 
 
 ```python
-# Download
-import requests
-import zipfile
-import os
+# Download data
 
 # Set file path
 urls = ['https://coast.noaa.gov/htdata/CMSP/AISDataHandler/2020/AIS_2020_01_01.zip',
@@ -57,45 +48,323 @@ urls = ['https://coast.noaa.gov/htdata/CMSP/AISDataHandler/2020/AIS_2020_01_01.z
 'https://coast.noaa.gov/htdata/CMSP/AISDataHandler/2020/AIS_2020_07_01.zip',
 'https://coast.noaa.gov/htdata/CMSP/AISDataHandler/2020/AIS_2020_10_01.zip']
 
+# Unzip data
 for url in urls:
+
   r = requests.get(url)
   filename = url.split('/')[-1]
   with open(filename,'wb') as output_file:
       output_file.write(r.content)
-  # Unzip
+  print(filename)
+
   try:
       with zipfile.ZipFile(filename) as z:
           z.extractall()
-          print("Extracted all")
+          print("Extracted file")
           os.remove(filename)
   except:
       print("Invalid file")
+
 print("Download completed!")
 ```
 
-    Extracted all
-    Extracted all
-    Extracted all
-    Extracted all
-    Download completed!
+
+```python
+# Read csv and create df
+ais_data = pd.DataFrame()
+
+for url in urls:
+
+  filename = url.split('/')[-1]
+  filename = filename.replace("zip", "csv")
+  data = pd.read_csv('data/' + filename)
+  ais_data = ais_data.append(data)
+  
+print("Before preprocessing...")
+ais_data = ais_data.reset_index(drop = True)
+ais_data
+```
+
+
+```python
+# Save AIS data to file
+ais_data.to_csv('data/ais_data_all.csv')
+```
+
+### Model data - CMEMS
+Downloading the data for the 4 days. [DATASETS](https://resources.marine.copernicus.eu/?option=com_csw&task=results)
+
+
+```python
+# Connect to CMEMS FTP
+
+name = 'avilanovacortez'
+pwd = 'CMEMS-data-2021'
+"""
+name = getpass('Enter name: ')
+pwd = getpass('Enter pwd: ')
+"""
+
+def make_con(url):
+
+    con = ftplib.FTP(url)
+    print(con.getwelcome())
+
+    return con
+
+con = make_con('nrt.cmems-du.eu')
+```
+
+    220 Welcome to CMEMS FTP service
+    
+
+
+```python
+# Print available data
+
+wav_url = '/Core/GLOBAL_ANALYSIS_FORECAST_WAV_001_027/global-analysis-forecast-wav-001-027/2020/' # 3-hourly
+phy_url = '/Core/GLOBAL_ANALYSIS_FORECAST_PHY_001_024/global-analysis-forecast-phy-001-024/2020/' # 24-hourly
+
+def print_collection(url, con):
+
+  try:
+
+    con.login(name, pwd)
+    # Navigate to a wave forecast product
+    con.cwd(url)
+    # Retrieve as list
+    con.retrlines('LIST') 
+    
+  except ftplib.all_errors as e:
+    print('FTP error:', e)
+
+#print_collection(wav_url + '07', con) # Print content for July
+```
+
+
+```python
+# Download data 
+
+wav_url = '/Core/GLOBAL_ANALYSIS_FORECAST_WAV_001_027/global-analysis-forecast-wav-001-027/2020/' # 3-hourly
+phy_url = '/Core/GLOBAL_ANALYSIS_FORECAST_PHY_001_024/global-analysis-forecast-phy-001-024/2020/' # 24-hourly
+
+wav_jan = "mfwamglocep_2020010100_R20200102.nc"
+wav_apr = "mfwamglocep_2020040100_R20200402.nc"
+wav_jul = "mfwamglocep_2020070100_R20200702.nc"
+wav_oct = "mfwamglocep_2020100100_R20201002.nc"
+
+phy_jan = "mercatorpsy4v3r1_gl12_mean_20200101_R20200115.nc"
+phy_apr = "mercatorpsy4v3r1_gl12_mean_20200401_R20200415.nc"
+phy_jul = "mercatorpsy4v3r1_gl12_mean_20200701_R20200715.nc"
+phy_oct = "mercatorpsy4v3r1_gl12_mean_20201001_R20201014.nc"
+
+def download_ftp(url, prod_name):
+  # Check if file exists, taken from source at the top
+  if os.path.isfile(prod_name):
+    print("There is already a local copy of {}".format(prod_name))
+
+  else:
+    try:
+
+      con.login(name, pwd)
+      con.cwd(url)
+
+      with open(prod_name, 'wb') as fp:
+        con.retrbinary('RETR {}'.format(prod_name), fp.write)
+            
+    except ftplib.all_errors as e:
+      print('FTP error:', e)
+
+"""
+# Use this to download data 
+download_ftp(wav_url + '01', wav_jan)
+download_ftp(wav_url + '04', wav_apr)
+download_ftp(wav_url + '07', wav_jul)
+download_ftp(wav_url + '10', wav_oct)
+
+download_ftp(phy_url + '01', phy_jan)
+download_ftp(phy_url + '04', phy_apr)
+download_ftp(phy_url + '07', phy_jul)
+download_ftp(phy_url + '10', phy_oct)
+"""
+```
+
+
+
+
+    "\n# Use this to download data \ndownload_ftp(wav_url + '01', wav_jan)\ndownload_ftp(wav_url + '04', wav_apr)\ndownload_ftp(wav_url + '07', wav_jul)\ndownload_ftp(wav_url + '10', wav_oct)\n\ndownload_ftp(phy_url + '01', phy_jan)\ndownload_ftp(phy_url + '04', phy_apr)\ndownload_ftp(phy_url + '07', phy_jul)\ndownload_ftp(phy_url + '10', phy_oct)\n"
+
 
 
 
 ```python
-# Read csv
-import pandas as pd
-ais_data = pd.DataFrame()
-for url in urls:
-  filename = url.split('/')[-1]
-  filename = filename.replace("zip","csv")
-  data = pd.read_csv(filename)
-  ais_data = ais_data.append(data)
-print("Before preprocessing...")
-ais_data
+"""
+# OPTIONAL: Reduce CMEMS waves data size by using bbox
+
+# Between Rio de Janeiro and Lisboa
+# bbox = ((-9, 22), (-46, 38))
+
+def get_closest(array, value):
+    return np.abs(array - value).argmin()
+    
+ds_wav_jan = xr.open_dataset('data/' + wav_jan)
+ds_wav_apr = xr.open_dataset('data/' + wav_apr)
+ds_wav_jul = xr.open_dataset('data/' + wav_jul)
+ds_wav_oct = xr.open_dataset('data/' + wav_oct)
+
+ds_wav_all = [ds_wav_jan, ds_wav_apr, ds_wav_jul, ds_wav_oct]
+
+datasets_wav = []
+
+for ds_month in ds_wav_all:
+  
+  lon_min = get_closest(ds_month.longitude.data, bbox[0][0])
+  lon_max = get_closest(ds_month.longitude.data, bbox[1][0])
+  lat_min = get_closest(ds_month.latitude.data, bbox[0][1])
+  lat_max = get_closest(ds_month.latitude.data, bbox[1][1])
+
+  ds_wav_month_reg = ds_month.isel(time = 0, longitude = slice(lon_min, lon_max), latitude = slice(lat_min, lat_max))
+  datasets_wav.append(ds_wav_month_reg)
+
+ds_wav = xr.concat(datasets_wav, dim = 'time')
+ds_wav
+"""
 ```
 
-    Before preprocessing...
 
+```python
+"""
+# OPTIONAL: Reduce CMEMS physics data size by using bbox
+
+ds_phy_jan = xr.open_dataset('data/' + phy_jan)
+ds_phy_apr = xr.open_dataset('data/' + phy_apr)
+ds_phy_jul = xr.open_dataset('data/' + phy_jul)
+ds_phy_oct = xr.open_dataset('data/' + phy_oct)
+
+ds_phy_all = [ds_phy_jan, ds_phy_apr, ds_phy_jul, ds_phy_oct]
+
+datasets_phy = []
+
+for ds_month in ds_phy_all:
+  
+  lon_min = get_closest(ds_month.longitude.data, bbox[0][0])
+  lon_max = get_closest(ds_month.longitude.data, bbox[1][0])
+  lat_min = get_closest(ds_month.latitude.data, bbox[0][1])
+  lat_max = get_closest(ds_month.latitude.data, bbox[1][1])
+
+  ds_phy_month_reg = ds_month.isel(time = 0, longitude = slice(lon_min, lon_max), latitude = slice(lat_min, lat_max))
+  datasets_phy.append(ds_phy_month_reg)
+
+ds_phy = xr.concat(datasets_phy, dim = 'time')
+ds_phy
+"""
+```
+
+
+```python
+# Join all wave products by using open_mfdataset, chunking data in response to memory issues
+ds_wav_all = xr.open_mfdataset('data/mfwamglocep*.nc')
+ds_wav_all
+```
+
+
+```python
+ds_phy_all = xr.open_mfdataset('data/mercator*.nc')
+ds_phy_all
+```
+
+### Routing data - CMEMS
+
+
+```python
+# Print available data
+wav_url = '/Core/GLOBAL_ANALYSIS_FORECAST_WAV_001_027/global-analysis-forecast-wav-001-027/2021/' 
+phy_url = '/Core/GLOBAL_ANALYSIS_FORECAST_PHY_001_024/global-analysis-forecast-phy-001-024/2021/' 
+
+def print_collection(url, con):
+
+  try:
+   
+    con.login(name, pwd)
+    con.cwd(url)
+    con.retrlines('LIST') 
+    
+  except ftplib.all_errors as e:
+    print('FTP error:', e)
+
+print_collection(wav_url + '06', con)
+```
+
+
+```python
+wav_2021_06_01 = "mfwamglocep_2021060100_R20210602.nc"
+wav_2021_06_02 = "mfwamglocep_2021060200_R20210603.nc"
+wav_2021_06_03 = "mfwamglocep_2021060300_R20210604.nc"
+
+phy_2021_06_01 = "mercatorpsy4v3r1_gl12_mean_20210601_R20210609.nc"
+phy_2021_06_02 = "mercatorpsy4v3r1_gl12_mean_20210602_R20210616.nc"
+phy_2021_06_03 = "mercatorpsy4v3r1_gl12_mean_20210603_R20210616.nc"
+
+download_ftp(wav_url + '06', wav_2021_06_01)
+download_ftp(wav_url + '06', wav_2021_06_02)
+download_ftp(wav_url + '06', wav_2021_06_03)
+
+download_ftp(phy_url + '06', phy_2021_06_01)
+download_ftp(phy_url + '06', phy_2021_06_02)
+download_ftp(phy_url + '06', phy_2021_06_03)
+```
+
+
+```python
+ds_phy_all_2021 = xr.open_mfdataset('data/routing/mercator*.nc')
+ds_phy_all_2021
+```
+
+## STEP 2: Merge and preprocess model data
+In general:
+* Merge AIS data with CMEMS data
+* Remove unneccessary columns (show estimated time, latitude, longitude, heading, SOG, COG, Gross Tonage, VHM0, VMDR, Temperature and Salinity)
+
+For CMEMS Data:
+* Normalize data and remove its outliers
+
+For AIS Data:
+* Remove ships with Status =! 0 or Status =! 8
+* Remove ships with SOG < 7 or SOG > 102.2
+* Remove ships with latitude > 91 and longitude > 181
+* Remove ships with latitude < -91 and longitude < -181
+* Remove ships with heading > 361
+* WRONG? Calculate Gross Tonnage
+* Estimate data base times
+* Normalize data (SOG) and remove its outliers
+
+
+```python
+study_data = pd.read_csv('data/ais_data_all.csv')
+```
+
+
+```python
+# Remove ships with status =! 0 and status =! 8
+study_data = study_data[(study_data['Status'] == 0) | (study_data['Status'] == 8)].dropna()
+
+# Remove ships with SOG < 5 or SOG > 102.2
+study_data = study_data[(study_data['SOG'] > 7) & (study_data['SOG'] < 102.2)].dropna()
+
+# Remove ships with latitude > 91 and longitude > 181
+study_data = study_data[(study_data['LAT'] < 91) & (study_data['LAT'] > -91)].dropna()
+study_data = study_data[(study_data['LON'] < 181) & (study_data['LON'] > -181)].dropna()
+
+# Remove ships with heading > 361
+study_data = study_data[(study_data['Heading'] < 361)].dropna()
+
+# Calculate tonnage (Length * Breadth * Depth * S) - WE DON'T HAVE THE DEPTH
+# According to https://cdn.shopify.com/s/files/1/1021/8837/files/Tonnage_Guide_1_-_Simplified_Measurement.pdf?1513
+study_data['GrossTonnage'] = 0.67 * study_data['Length'] * study_data['Width']
+
+study_data = study_data.reset_index(drop=True)
+study_data
+```
 
 
 
@@ -118,6 +387,7 @@ ais_data
   <thead>
     <tr style="text-align: right;">
       <th></th>
+      <th>Unnamed: 0</th>
       <th>MMSI</th>
       <th>BaseDateTime</th>
       <th>LAT</th>
@@ -135,108 +405,119 @@ ais_data
       <th>Draft</th>
       <th>Cargo</th>
       <th>TranscieverClass</th>
+      <th>GrossTonnage</th>
     </tr>
   </thead>
   <tbody>
     <tr>
       <th>0</th>
-      <td>367149340</td>
-      <td>2020-01-01T00:00:00</td>
-      <td>29.96476</td>
-      <td>-90.02724</td>
-      <td>1.3</td>
-      <td>10.0</td>
-      <td>16.0</td>
-      <td>SYDNEE TAYLOR</td>
-      <td>NaN</td>
-      <td>WDD4807</td>
-      <td>31.0</td>
+      <td>9</td>
+      <td>477628100</td>
+      <td>2020-01-01T00:00:01</td>
+      <td>36.80096</td>
+      <td>-75.22302</td>
+      <td>12.8</td>
+      <td>-128.7</td>
+      <td>283.0</td>
+      <td>NINGBO SEAL</td>
+      <td>IMO9579066</td>
+      <td>VRJD3</td>
+      <td>70.0</td>
       <td>0.0</td>
-      <td>26.0</td>
-      <td>9.0</td>
-      <td>NaN</td>
-      <td>31.0</td>
+      <td>225.0</td>
+      <td>32.0</td>
+      <td>14.3</td>
+      <td>70.0</td>
       <td>B</td>
+      <td>4824.00</td>
     </tr>
     <tr>
       <th>1</th>
-      <td>367687520</td>
-      <td>2020-01-01T00:00:00</td>
-      <td>30.20558</td>
-      <td>-91.03578</td>
-      <td>10.7</td>
-      <td>124.9</td>
-      <td>130.0</td>
-      <td>CHIPPEWA</td>
-      <td>NaN</td>
-      <td>WDI3361</td>
-      <td>31.0</td>
+      <td>17</td>
+      <td>538002845</td>
+      <td>2020-01-01T00:00:10</td>
+      <td>26.08420</td>
+      <td>-79.48273</td>
+      <td>13.2</td>
+      <td>189.0</td>
+      <td>187.0</td>
+      <td>YASA GOLDEN DARDANEL</td>
+      <td>IMO9339985</td>
+      <td>V7ME9</td>
+      <td>80.0</td>
       <td>0.0</td>
-      <td>22.0</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
+      <td>245.0</td>
+      <td>42.0</td>
+      <td>15.0</td>
+      <td>89.0</td>
       <td>B</td>
+      <td>6894.30</td>
     </tr>
     <tr>
       <th>2</th>
-      <td>367368170</td>
-      <td>2020-01-01T00:00:03</td>
-      <td>47.53785</td>
-      <td>-122.32833</td>
-      <td>0.6</td>
-      <td>46.5</td>
-      <td>141.0</td>
-      <td>SONJA H</td>
-      <td>NaN</td>
-      <td>WDE5536</td>
-      <td>31.0</td>
+      <td>50</td>
+      <td>249974000</td>
+      <td>2020-01-01T00:00:06</td>
+      <td>29.34368</td>
+      <td>-94.74366</td>
+      <td>10.2</td>
+      <td>85.7</td>
+      <td>86.0</td>
+      <td>PTI RHINE</td>
+      <td>IMO9313462</td>
+      <td>9HA4456</td>
+      <td>80.0</td>
       <td>0.0</td>
-      <td>18.0</td>
-      <td>6.0</td>
-      <td>NaN</td>
+      <td>183.0</td>
       <td>32.0</td>
+      <td>13.2</td>
+      <td>81.0</td>
       <td>B</td>
+      <td>3923.52</td>
     </tr>
     <tr>
       <th>3</th>
-      <td>367007980</td>
-      <td>2020-01-01T00:00:05</td>
-      <td>37.95154</td>
-      <td>-121.32682</td>
+      <td>55</td>
+      <td>477542400</td>
+      <td>2020-01-01T00:00:01</td>
+      <td>37.76973</td>
+      <td>-122.35415</td>
+      <td>10.6</td>
+      <td>-87.5</td>
+      <td>326.0</td>
+      <td>ATLANTIC PISCES</td>
+      <td>IMO9392781</td>
+      <td>VRFN3</td>
+      <td>80.0</td>
       <td>0.0</td>
-      <td>-49.6</td>
-      <td>511.0</td>
-      <td>ANGIE M BRUSCO</td>
-      <td>IMO5111359</td>
-      <td>WDC3446</td>
-      <td>31.0</td>
-      <td>0.0</td>
-      <td>28.0</td>
-      <td>7.0</td>
-      <td>3.4</td>
-      <td>NaN</td>
+      <td>183.0</td>
+      <td>32.0</td>
+      <td>12.2</td>
+      <td>80.0</td>
       <td>B</td>
+      <td>3923.52</td>
     </tr>
     <tr>
       <th>4</th>
-      <td>367538940</td>
-      <td>2020-01-01T00:00:05</td>
-      <td>30.00258</td>
-      <td>-93.22608</td>
-      <td>3.1</td>
-      <td>168.0</td>
-      <td>511.0</td>
-      <td>RITA ANN</td>
-      <td>NaN</td>
-      <td>WDG4670</td>
-      <td>31.0</td>
+      <td>69</td>
+      <td>636016431</td>
+      <td>2020-01-01T00:00:10</td>
+      <td>26.89363</td>
+      <td>-79.20262</td>
+      <td>19.7</td>
+      <td>154.9</td>
+      <td>155.0</td>
+      <td>MSC VAISHNAVI R</td>
+      <td>IMO9227340</td>
+      <td>A8RL2</td>
+      <td>70.0</td>
       <td>0.0</td>
-      <td>21.0</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
+      <td>282.0</td>
+      <td>32.0</td>
+      <td>12.5</td>
+      <td>71.0</td>
       <td>B</td>
+      <td>6046.08</td>
     </tr>
     <tr>
       <th>...</th>
@@ -257,2259 +538,1846 @@ ais_data
       <td>...</td>
       <td>...</td>
       <td>...</td>
+      <td>...</td>
+      <td>...</td>
     </tr>
     <tr>
-      <th>7803747</th>
-      <td>636019842</td>
-      <td>2020-10-01T23:59:56</td>
-      <td>29.92496</td>
-      <td>-89.94634</td>
-      <td>0.0</td>
-      <td>-145.2</td>
-      <td>268.0</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
+      <th>720152</th>
+      <td>30502227</td>
+      <td>441310000</td>
+      <td>2020-10-01T23:59:34</td>
+      <td>26.05327</td>
+      <td>-79.84955</td>
+      <td>19.7</td>
+      <td>4.2</td>
       <td>5.0</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>A</td>
-    </tr>
-    <tr>
-      <th>7803748</th>
-      <td>338314788</td>
-      <td>2020-10-01T23:59:57</td>
-      <td>39.31591</td>
-      <td>-76.40135</td>
-      <td>0.1</td>
-      <td>-49.6</td>
-      <td>511.0</td>
-      <td>DREAMTIME III</td>
-      <td>IMO0000000</td>
-      <td>NaN</td>
-      <td>37.0</td>
-      <td>NaN</td>
-      <td>12.0</td>
+      <td>GLOVIS SOLOMON</td>
+      <td>IMO9445409</td>
+      <td>D7GS</td>
+      <td>70.0</td>
       <td>0.0</td>
-      <td>NaN</td>
-      <td>NaN</td>
+      <td>232.0</td>
+      <td>32.0</td>
+      <td>9.4</td>
+      <td>70.0</td>
       <td>B</td>
+      <td>4974.08</td>
     </tr>
     <tr>
-      <th>7803749</th>
-      <td>368070720</td>
-      <td>2020-10-01T23:59:59</td>
-      <td>30.04614</td>
-      <td>-90.66375</td>
+      <th>720153</th>
+      <td>30502254</td>
+      <td>636013708</td>
+      <td>2020-10-01T23:58:58</td>
+      <td>28.44555</td>
+      <td>-95.59912</td>
+      <td>12.9</td>
+      <td>56.0</td>
+      <td>57.0</td>
+      <td>NEW ACTIVITY</td>
+      <td>IMO9361524</td>
+      <td>A8OU2</td>
+      <td>80.0</td>
       <td>0.0</td>
-      <td>-99.2</td>
-      <td>511.0</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>0.0</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
+      <td>228.0</td>
+      <td>42.0</td>
+      <td>14.8</td>
+      <td>80.0</td>
       <td>B</td>
+      <td>6415.92</td>
     </tr>
     <tr>
-      <th>7803750</th>
-      <td>368090840</td>
-      <td>2020-10-01T23:59:59</td>
-      <td>29.90862</td>
-      <td>-90.10211</td>
-      <td>2.9</td>
-      <td>96.5</td>
-      <td>179.0</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
+      <th>720154</th>
+      <td>30502305</td>
+      <td>218092000</td>
+      <td>2020-10-01T23:59:36</td>
+      <td>39.18945</td>
+      <td>-130.91286</td>
+      <td>19.9</td>
+      <td>-129.6</td>
+      <td>280.0</td>
+      <td>HANOVER EXPRESS</td>
+      <td>IMO9343716</td>
+      <td>DFGX2</td>
+      <td>70.0</td>
       <td>0.0</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>A</td>
-    </tr>
-    <tr>
-      <th>7803751</th>
-      <td>368078690</td>
-      <td>2020-10-01T23:59:59</td>
-      <td>30.27919</td>
-      <td>-91.20450</td>
-      <td>5.3</td>
-      <td>-126.7</td>
-      <td>286.0</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>0.0</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
-      <td>NaN</td>
+      <td>336.0</td>
+      <td>42.0</td>
+      <td>14.6</td>
+      <td>79.0</td>
       <td>B</td>
+      <td>9455.04</td>
+    </tr>
+    <tr>
+      <th>720155</th>
+      <td>30502324</td>
+      <td>636017617</td>
+      <td>2020-10-01T23:57:40</td>
+      <td>17.18697</td>
+      <td>-67.33857</td>
+      <td>11.7</td>
+      <td>110.0</td>
+      <td>110.0</td>
+      <td>NORDIC STAVANGER</td>
+      <td>IMO9514377</td>
+      <td>D5LX3</td>
+      <td>70.0</td>
+      <td>0.0</td>
+      <td>189.0</td>
+      <td>32.0</td>
+      <td>12.7</td>
+      <td>70.0</td>
+      <td>B</td>
+      <td>4052.16</td>
+    </tr>
+    <tr>
+      <th>720156</th>
+      <td>30502456</td>
+      <td>636015168</td>
+      <td>2020-10-01T23:54:41</td>
+      <td>37.51332</td>
+      <td>-68.00148</td>
+      <td>10.9</td>
+      <td>77.4</td>
+      <td>62.0</td>
+      <td>AQUAFORTUNE</td>
+      <td>IMO9426427</td>
+      <td>A8ZA6</td>
+      <td>70.0</td>
+      <td>0.0</td>
+      <td>289.0</td>
+      <td>45.0</td>
+      <td>18.0</td>
+      <td>71.0</td>
+      <td>B</td>
+      <td>8713.35</td>
     </tr>
   </tbody>
 </table>
-<p>30502798 rows × 17 columns</p>
+<p>720157 rows × 19 columns</p>
 </div>
 
 
 
-### CMEMS
-Downloading the data for the 4 days (in stage I). [DATASETS](https://resources.marine.copernicus.eu/?option=com_csw&task=results)
-
 
 ```python
-import ftplib # import libraries
-import os
-from getpass import getpass
+from datetime import datetime, timedelta
 
-con = ftplib.FTP('nrt.cmems-du.eu') # connect to CMEMS FTP
-print(con.getwelcome())
+# Round the base date time
+study_data['BaseDateTime'] = study_data['BaseDateTime'].apply(lambda x: datetime.fromisoformat(x))
 
-"""
-name = getpass('Enter name: ') # get login from input
-pwd = getpass('Enter pwd: ')
-"""
+def datetime_rounder(time):
+    return (time.replace(second = 0, minute = 0, hour = time.hour) + timedelta(hours = time.minute//30))
 
-name = 'avilanovacortez'
-pwd = 'CMEMS-data-2021'
-```
+study_data['EstimatedTime'] = [datetime_rounder(study_data['BaseDateTime'][x]) for x in range(study_data['BaseDateTime'].size)]
+study_data['EstimatedTime'] = pd.to_datetime(study_data['EstimatedTime']).dt.strftime('%y-%m-%d %h:%I:%s')
+#study_data['EstimatedTime'] = [np.datetime64(study_data['EstimatedTime'][x]) for x in range(study_data['EstimatedTime'].size)]
 
-    220 Welcome to CMEMS NRT FTP service
-
-
-
-```python
-wav_url = '/Core/GLOBAL_ANALYSIS_FORECAST_WAV_001_027/global-analysis-forecast-wav-001-027/2020/' # url for WAVE products - 3-hourly, one-day-forecast
-phy_url = '/Core/GLOBAL_ANALYSIS_FORECAST_PHY_001_024/global-analysis-forecast-phy-001-024/2020/' # url for PHYSICAL products
-
-def print_collection(url): # define function for FTP exploration
-  try:
-    # login
-    con.login(name, pwd)
-    # navigate to a wave forecast product, this month
-    con.cwd(url)
-    # retrieve as list
-    con.retrlines('LIST') 
-    
-  except ftplib.all_errors as e:
-    print('FTP error:', e)
-
-print_collection(wav_url + '07') # print content of url
-```
-
-    -rw-rw-r--    1 ftp      ftp      633801925 Jul 02  2020 mfwamglocep_2020070100_R20200702.nc
-    -rw-rw-r--    1 ftp      ftp      631627132 Jul 03  2020 mfwamglocep_2020070200_R20200703.nc
-    -rw-rw-r--    1 ftp      ftp      634470499 Jul 04  2020 mfwamglocep_2020070300_R20200704.nc
-    -rw-rw-r--    1 ftp      ftp      634911437 Jul 05  2020 mfwamglocep_2020070400_R20200705.nc
-    -rw-rw-r--    1 ftp      ftp      633233443 Jul 06  2020 mfwamglocep_2020070500_R20200706.nc
-    -rw-rw-r--    1 ftp      ftp      634290111 Jul 07  2020 mfwamglocep_2020070600_R20200707.nc
-    -rw-rw-r--    1 ftp      ftp      634594020 Jul 08  2020 mfwamglocep_2020070700_R20200708.nc
-    -rw-rw-r--    1 ftp      ftp      635713877 Jul 09  2020 mfwamglocep_2020070800_R20200709.nc
-    -rw-rw-r--    1 ftp      ftp      636855533 Jul 10  2020 mfwamglocep_2020070900_R20200710.nc
-    -rw-rw-r--    1 ftp      ftp      639037924 Jul 11  2020 mfwamglocep_2020071000_R20200711.nc
-    -rw-rw-r--    1 ftp      ftp      635226220 Jul 12  2020 mfwamglocep_2020071100_R20200712.nc
-    -rw-rw-r--    1 ftp      ftp      633358568 Jul 13  2020 mfwamglocep_2020071200_R20200713.nc
-    -rw-rw-r--    1 ftp      ftp      631530511 Jul 14  2020 mfwamglocep_2020071300_R20200714.nc
-    -rw-rw-r--    1 ftp      ftp      629912123 Jul 15  2020 mfwamglocep_2020071400_R20200715.nc
-    -rw-rw-r--    1 ftp      ftp      628150083 Jul 16  2020 mfwamglocep_2020071500_R20200716.nc
-    -rw-rw-r--    1 ftp      ftp      629491286 Jul 17  2020 mfwamglocep_2020071600_R20200717.nc
-    -rw-rw-r--    1 ftp      ftp      630929866 Jul 18  2020 mfwamglocep_2020071700_R20200718.nc
-    -rw-rw-r--    1 ftp      ftp      630973689 Jul 19  2020 mfwamglocep_2020071800_R20200719.nc
-    -rw-rw-r--    1 ftp      ftp      630963059 Jul 20  2020 mfwamglocep_2020071900_R20200720.nc
-    -rw-rw-r--    1 ftp      ftp      634016423 Jul 21  2020 mfwamglocep_2020072000_R20200721.nc
-    -rw-rw-r--    1 ftp      ftp      636248163 Jul 22  2020 mfwamglocep_2020072100_R20200722.nc
-    -rw-rw-r--    1 ftp      ftp      637710739 Jul 23  2020 mfwamglocep_2020072200_R20200723.nc
-    -rw-rw-r--    1 ftp      ftp      639017052 Jul 24  2020 mfwamglocep_2020072300_R20200724.nc
-    -rw-rw-r--    1 ftp      ftp      638780989 Jul 25  2020 mfwamglocep_2020072400_R20200725.nc
-    -rw-rw-r--    1 ftp      ftp      636179439 Jul 26  2020 mfwamglocep_2020072500_R20200726.nc
-    -rw-rw-r--    1 ftp      ftp      636169984 Jul 27  2020 mfwamglocep_2020072600_R20200727.nc
-    -rw-rw-r--    1 ftp      ftp      634458296 Jul 28  2020 mfwamglocep_2020072700_R20200728.nc
-    -rw-rw-r--    1 ftp      ftp      633303458 Jul 29  2020 mfwamglocep_2020072800_R20200729.nc
-    -rw-rw-r--    1 ftp      ftp      633012641 Jul 30  2020 mfwamglocep_2020072900_R20200730.nc
-    -rw-rw-r--    1 ftp      ftp      633876588 Jul 31  2020 mfwamglocep_2020073000_R20200731.nc
-    -rw-rw-r--    1 ftp      ftp      633677279 Aug 01  2020 mfwamglocep_2020073100_R20200801.nc
-
-
-
-```python
-wav_url = '/Core/GLOBAL_ANALYSIS_FORECAST_WAV_001_027/global-analysis-forecast-wav-001-027/2020/' # url for WAVE products - 3-hourly, one-day-forecast
-phy_url = '/Core/GLOBAL_ANALYSIS_FORECAST_PHY_001_024/global-analysis-forecast-phy-001-024/2020/'
-
-wav_jan = "mfwamglocep_2020010100_R20200102.nc"
-wav_apr = "mfwamglocep_2020040100_R20200402.nc"
-wav_jul = "mfwamglocep_2020070100_R20200702.nc"
-wav_oct = "mfwamglocep_2020100100_R20201002.nc"
-
-phy_jan = "mercatorpsy4v3r1_gl12_mean_20200101_R20200115.nc"
-phy_apr = "mercatorpsy4v3r1_gl12_mean_20200401_R20200415.nc"
-phy_jul = "mercatorpsy4v3r1_gl12_mean_20200701_R20200715.nc"
-phy_oct = "mercatorpsy4v3r1_gl12_mean_20201001_R20201014.nc"
-
-def download_ftp(url, prod_name): # function to download CMEMS FTP
-  # do check if file exists, taken from source at the top
-  if os.path.isfile(prod_name):
-    print("There is already a local copy of {}".format(prod_name))
-  else:
-    try:
-      # login as before
-      con.login(name, pwd)
-      # navigate to desired folder seen above
-      con.cwd(url)
-      with open(prod_name, 'wb') as fp:
-        con.retrbinary('RETR {}'.format(prod_name), fp.write)
-            
-    except ftplib.all_errors as e:
-      print('FTP error:', e)
-
-download_ftp(wav_url + '01', wav_jan)
-download_ftp(wav_url + '04', wav_apr)
-download_ftp(wav_url + '07', wav_jul)
-download_ftp(wav_url + '10', wav_oct)
-
-download_ftp(phy_url + '01', phy_jan)
-download_ftp(phy_url + '04', phy_apr)
-download_ftp(phy_url + '07', phy_jul)
-download_ftp(phy_url + '10', phy_oct)
-```
-
-## STEP 3: Merge and preprocess
-For CMEMS Data:
-* OK Reduce CMEMS data size by using bbox
-* Normalize data and remove its outliers
-
-For AIS Data:
-* OK Reduce AIS data size by using bbox
-* OK Remove ships with Status =! 0 or Status =! 8
-* OK Remove ships with SOG < 5 or SOG > 102.2
-* OK Remove ships with latitude > 91 and longitude > 181
-* OK Remove ships with heading > 361
-* WRONG Calculate Gross Tonnage
-* Estimate data base times
-* Normalize data (SOG) and remove its outliers
-
-In general:
-* Merge AIS data with CMEMS data
-* Remove unneccessary columns (show only estimated time, latitude, longitude, heading, SOG, COG and gross tonage)
-
-
-```python
-import xarray as xr
-import numpy as np
-
-def get_closest(array, value):
-    return np.abs(array - value).argmin()
-
-ds_wav_jan = xr.open_dataset(wav_jan)
-ds_wav_apr = xr.open_dataset(wav_apr)
-ds_wav_jul = xr.open_dataset(wav_jul)
-#ds_wav_oct = xr.open_dataset(wav_oct)
-
-ds_wav_all = [ds_wav_jan, ds_wav_apr, ds_wav_jul]
-#ds_wav_all = [ds_wav_jan, ds_wav_apr, ds_wav_jul, ds_wav_oct]
-datasets_wav = []
-
-for ds_month in ds_wav_all:
-  
-  lon_min = get_closest(ds_month.longitude.data, bbox[0][0])
-  lon_max = get_closest(ds_month.longitude.data, bbox[1][0])
-  lat_min = get_closest(ds_month.latitude.data, bbox[0][1])
-  lat_max = get_closest(ds_month.latitude.data, bbox[1][1])
-
-  ds_wav_month_reg = ds_month.isel(time = 0, longitude = slice(lon_min, lon_max), latitude = slice(lat_min, lat_max))
-  datasets_wav.append(ds_wav_month_reg)
-
-ds_wav = xr.concat(datasets_wav, dim = 'ds_month')
-ds_wav
+study_data
 ```
 
 
 
 
-<div><svg style="position: absolute; width: 0; height: 0; overflow: hidden">
-<defs>
-<symbol id="icon-database" viewBox="0 0 32 32">
-<path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path>
-<path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
-<path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
-</symbol>
-<symbol id="icon-file-text2" viewBox="0 0 32 32">
-<path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path>
-<path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
-<path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
-<path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
-</symbol>
-</defs>
-</svg>
-<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
- *
- */
-
-:root {
-  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
-  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
-  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
-  --xr-border-color: var(--jp-border-color2, #e0e0e0);
-  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
-  --xr-background-color: var(--jp-layout-color0, white);
-  --xr-background-color-row-even: var(--jp-layout-color1, white);
-  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
-}
-
-html[theme=dark],
-body.vscode-dark {
-  --xr-font-color0: rgba(255, 255, 255, 1);
-  --xr-font-color2: rgba(255, 255, 255, 0.54);
-  --xr-font-color3: rgba(255, 255, 255, 0.38);
-  --xr-border-color: #1F1F1F;
-  --xr-disabled-color: #515151;
-  --xr-background-color: #111111;
-  --xr-background-color-row-even: #111111;
-  --xr-background-color-row-odd: #313131;
-}
-
-.xr-wrap {
-  display: block;
-  min-width: 300px;
-  max-width: 700px;
-}
-
-.xr-text-repr-fallback {
-  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
-  display: none;
-}
-
-.xr-header {
-  padding-top: 6px;
-  padding-bottom: 6px;
-  margin-bottom: 4px;
-  border-bottom: solid 1px var(--xr-border-color);
-}
-
-.xr-header > div,
-.xr-header > ul {
-  display: inline;
-  margin-top: 0;
-  margin-bottom: 0;
-}
-
-.xr-obj-type,
-.xr-array-name {
-  margin-left: 2px;
-  margin-right: 10px;
-}
-
-.xr-obj-type {
-  color: var(--xr-font-color2);
-}
-
-.xr-sections {
-  padding-left: 0 !important;
-  display: grid;
-  grid-template-columns: 150px auto auto 1fr 20px 20px;
-}
-
-.xr-section-item {
-  display: contents;
-}
-
-.xr-section-item input {
-  display: none;
-}
-
-.xr-section-item input + label {
-  color: var(--xr-disabled-color);
-}
-
-.xr-section-item input:enabled + label {
-  cursor: pointer;
-  color: var(--xr-font-color2);
-}
-
-.xr-section-item input:enabled + label:hover {
-  color: var(--xr-font-color0);
-}
-
-.xr-section-summary {
-  grid-column: 1;
-  color: var(--xr-font-color2);
-  font-weight: 500;
-}
-
-.xr-section-summary > span {
-  display: inline-block;
-  padding-left: 0.5em;
-}
-
-.xr-section-summary-in:disabled + label {
-  color: var(--xr-font-color2);
-}
-
-.xr-section-summary-in + label:before {
-  display: inline-block;
-  content: '►';
-  font-size: 11px;
-  width: 15px;
-  text-align: center;
-}
-
-.xr-section-summary-in:disabled + label:before {
-  color: var(--xr-disabled-color);
-}
-
-.xr-section-summary-in:checked + label:before {
-  content: '▼';
-}
-
-.xr-section-summary-in:checked + label > span {
-  display: none;
-}
-
-.xr-section-summary,
-.xr-section-inline-details {
-  padding-top: 4px;
-  padding-bottom: 4px;
-}
-
-.xr-section-inline-details {
-  grid-column: 2 / -1;
-}
-
-.xr-section-details {
-  display: none;
-  grid-column: 1 / -1;
-  margin-bottom: 5px;
-}
-
-.xr-section-summary-in:checked ~ .xr-section-details {
-  display: contents;
-}
-
-.xr-array-wrap {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: 20px auto;
-}
-
-.xr-array-wrap > label {
-  grid-column: 1;
-  vertical-align: top;
-}
-
-.xr-preview {
-  color: var(--xr-font-color3);
-}
-
-.xr-array-preview,
-.xr-array-data {
-  padding: 0 5px !important;
-  grid-column: 2;
-}
-
-.xr-array-data,
-.xr-array-in:checked ~ .xr-array-preview {
-  display: none;
-}
-
-.xr-array-in:checked ~ .xr-array-data,
-.xr-array-preview {
-  display: inline-block;
-}
-
-.xr-dim-list {
-  display: inline-block !important;
-  list-style: none;
-  padding: 0 !important;
-  margin: 0;
-}
-
-.xr-dim-list li {
-  display: inline-block;
-  padding: 0;
-  margin: 0;
-}
-
-.xr-dim-list:before {
-  content: '(';
-}
-
-.xr-dim-list:after {
-  content: ')';
-}
-
-.xr-dim-list li:not(:last-child):after {
-  content: ',';
-  padding-right: 5px;
-}
-
-.xr-has-index {
-  font-weight: bold;
-}
-
-.xr-var-list,
-.xr-var-item {
-  display: contents;
-}
-
-.xr-var-item > div,
-.xr-var-item label,
-.xr-var-item > .xr-var-name span {
-  background-color: var(--xr-background-color-row-even);
-  margin-bottom: 0;
-}
-
-.xr-var-item > .xr-var-name:hover span {
-  padding-right: 5px;
-}
-
-.xr-var-list > li:nth-child(odd) > div,
-.xr-var-list > li:nth-child(odd) > label,
-.xr-var-list > li:nth-child(odd) > .xr-var-name span {
-  background-color: var(--xr-background-color-row-odd);
-}
-
-.xr-var-name {
-  grid-column: 1;
-}
-
-.xr-var-dims {
-  grid-column: 2;
-}
-
-.xr-var-dtype {
-  grid-column: 3;
-  text-align: right;
-  color: var(--xr-font-color2);
-}
-
-.xr-var-preview {
-  grid-column: 4;
-}
-
-.xr-var-name,
-.xr-var-dims,
-.xr-var-dtype,
-.xr-preview,
-.xr-attrs dt {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding-right: 10px;
-}
-
-.xr-var-name:hover,
-.xr-var-dims:hover,
-.xr-var-dtype:hover,
-.xr-attrs dt:hover {
-  overflow: visible;
-  width: auto;
-  z-index: 1;
-}
-
-.xr-var-attrs,
-.xr-var-data {
-  display: none;
-  background-color: var(--xr-background-color) !important;
-  padding-bottom: 5px !important;
-}
-
-.xr-var-attrs-in:checked ~ .xr-var-attrs,
-.xr-var-data-in:checked ~ .xr-var-data {
-  display: block;
-}
-
-.xr-var-data > table {
-  float: right;
-}
-
-.xr-var-name span,
-.xr-var-data,
-.xr-attrs {
-  padding-left: 25px !important;
-}
-
-.xr-attrs,
-.xr-var-attrs,
-.xr-var-data {
-  grid-column: 1 / -1;
-}
-
-dl.xr-attrs {
-  padding: 0;
-  margin: 0;
-  display: grid;
-  grid-template-columns: 125px auto;
-}
-
-.xr-attrs dt,
-.xr-attrs dd {
-  padding: 0;
-  margin: 0;
-  float: left;
-  padding-right: 10px;
-  width: auto;
-}
-
-.xr-attrs dt {
-  font-weight: normal;
-  grid-column: 1;
-}
-
-.xr-attrs dt:hover span {
-  display: inline-block;
-  background: var(--xr-background-color);
-  padding-right: 10px;
-}
-
-.xr-attrs dd {
-  grid-column: 2;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.xr-icon-database,
-.xr-icon-file-text2 {
-  display: inline-block;
-  vertical-align: middle;
-  width: 1em;
-  height: 1.5em !important;
-  stroke-width: 0;
-  stroke: currentColor;
-  fill: currentColor;
-}
-</style><pre class='xr-text-repr-fallback'>&lt;xarray.Dataset&gt;
-Dimensions:    (ds_month: 3, latitude: 132, longitude: 240)
-Coordinates:
-  * longitude  (longitude) float64 10.0 10.08 10.17 10.25 ... 29.75 29.83 29.92
-  * latitude   (latitude) float64 54.0 54.08 54.17 54.25 ... 64.75 64.83 64.92
-    time       (ds_month) datetime64[ns] 2020-01-01T03:00:00 ... 2020-07-01T0...
-Dimensions without coordinates: ds_month
-Data variables: (12/17)
-    VHM0       (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    VMDR_WW    (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    VHM0_WW    (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    VMDR_SW1   (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    VTM01_SW1  (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    VMDR_SW2   (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    ...         ...
-    VTPK       (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    VSDX       (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    VSDY       (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    VPED       (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    VTM02      (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    VTM01_WW   (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-Attributes: (12/27)
-    Conventions:                   CF-1.6
-    time_coverage_start:           20200101-03:00:00
-    time_coverage_end:             20200102-00:00:00
-    date_created:                  20200102-06:22:00
-    product_type:                  hindcast
-    product:                       GLOBAL_ANALYSIS_FORECAST_WAV_001_027
-    ...                            ...
-    geospatial_lon_step:           0.08332825
-    geospatial_lon_units:          degree
-    geospatial_lat_min:            -80.0
-    geospatial_lat_max:            90.0
-    geospatial_lat_step:           0.08333588
-    geospatial_lat_units:          degree</pre><div class='xr-wrap' hidden><div class='xr-header'><div class='xr-obj-type'>xarray.Dataset</div></div><ul class='xr-sections'><li class='xr-section-item'><input id='section-66e95564-9ea9-4203-84e1-f5fe41c7b831' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-66e95564-9ea9-4203-84e1-f5fe41c7b831' class='xr-section-summary'  title='Expand/collapse section'>Dimensions:</label><div class='xr-section-inline-details'><ul class='xr-dim-list'><li><span>ds_month</span>: 3</li><li><span class='xr-has-index'>latitude</span>: 132</li><li><span class='xr-has-index'>longitude</span>: 240</li></ul></div><div class='xr-section-details'></div></li><li class='xr-section-item'><input id='section-ce7c74d1-a129-4693-983f-0fb7c723ee4b' class='xr-section-summary-in' type='checkbox'  checked><label for='section-ce7c74d1-a129-4693-983f-0fb7c723ee4b' class='xr-section-summary' >Coordinates: <span>(3)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'><li class='xr-var-item'><div class='xr-var-name'><span class='xr-has-index'>longitude</span></div><div class='xr-var-dims'>(longitude)</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>10.0 10.08 10.17 ... 29.83 29.92</div><input id='attrs-41d90b14-b5d3-4a9c-b7e9-d5ab8b656449' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-41d90b14-b5d3-4a9c-b7e9-d5ab8b656449' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-a3217492-c203-4f62-a3af-902c16e9729f' class='xr-var-data-in' type='checkbox'><label for='data-a3217492-c203-4f62-a3af-902c16e9729f' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>standard_name :</span></dt><dd>longitude</dd><dt><span>long_name :</span></dt><dd>longitude coordinate</dd><dt><span>units :</span></dt><dd>degrees_east</dd><dt><span>axis :</span></dt><dd>X</dd><dt><span>step :</span></dt><dd>0.08332825</dd></dl></div><div class='xr-var-data'><pre>array([10.      , 10.083333, 10.166667, ..., 29.75    , 29.833333, 29.916667])</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span class='xr-has-index'>latitude</span></div><div class='xr-var-dims'>(latitude)</div><div class='xr-var-dtype'>float64</div><div class='xr-var-preview xr-preview'>54.0 54.08 54.17 ... 64.83 64.92</div><input id='attrs-1af5c976-e98b-4921-8a35-4919146dd688' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-1af5c976-e98b-4921-8a35-4919146dd688' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-5fc7670d-8f8b-4ec7-9d69-ae6b8d8e0294' class='xr-var-data-in' type='checkbox'><label for='data-5fc7670d-8f8b-4ec7-9d69-ae6b8d8e0294' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>standard_name :</span></dt><dd>latitude</dd><dt><span>long_name :</span></dt><dd>latitude coordinate</dd><dt><span>units :</span></dt><dd>degrees_north</dd><dt><span>axis :</span></dt><dd>Y</dd><dt><span>step :</span></dt><dd>0.08333588</dd></dl></div><div class='xr-var-data'><pre>array([54.      , 54.083333, 54.166667, 54.25    , 54.333333, 54.416667,
-       54.5     , 54.583333, 54.666667, 54.75    , 54.833333, 54.916667,
-       55.      , 55.083333, 55.166667, 55.25    , 55.333333, 55.416667,
-       55.5     , 55.583333, 55.666667, 55.75    , 55.833333, 55.916667,
-       56.      , 56.083333, 56.166667, 56.25    , 56.333333, 56.416667,
-       56.5     , 56.583333, 56.666667, 56.75    , 56.833333, 56.916667,
-       57.      , 57.083333, 57.166667, 57.25    , 57.333333, 57.416667,
-       57.5     , 57.583333, 57.666667, 57.75    , 57.833333, 57.916667,
-       58.      , 58.083333, 58.166667, 58.25    , 58.333333, 58.416667,
-       58.5     , 58.583333, 58.666667, 58.75    , 58.833333, 58.916667,
-       59.      , 59.083333, 59.166667, 59.25    , 59.333333, 59.416667,
-       59.5     , 59.583333, 59.666667, 59.75    , 59.833333, 59.916667,
-       60.      , 60.083333, 60.166667, 60.25    , 60.333333, 60.416667,
-       60.5     , 60.583333, 60.666667, 60.75    , 60.833333, 60.916667,
-       61.      , 61.083333, 61.166667, 61.25    , 61.333333, 61.416667,
-       61.5     , 61.583333, 61.666667, 61.75    , 61.833333, 61.916667,
-       62.      , 62.083333, 62.166667, 62.25    , 62.333333, 62.416667,
-       62.5     , 62.583333, 62.666667, 62.75    , 62.833333, 62.916667,
-       63.      , 63.083333, 63.166667, 63.25    , 63.333333, 63.416667,
-       63.5     , 63.583333, 63.666667, 63.75    , 63.833333, 63.916667,
-       64.      , 64.083333, 64.166667, 64.25    , 64.333333, 64.416667,
-       64.5     , 64.583333, 64.666667, 64.75    , 64.833333, 64.916667])</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>time</span></div><div class='xr-var-dims'>(ds_month)</div><div class='xr-var-dtype'>datetime64[ns]</div><div class='xr-var-preview xr-preview'>2020-01-01T03:00:00 ... 2020-07-...</div><input id='attrs-3d5d080a-b2c2-474e-800a-9b0141e550b9' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-3d5d080a-b2c2-474e-800a-9b0141e550b9' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-a47b6bce-18dd-46a7-8f05-460828915795' class='xr-var-data-in' type='checkbox'><label for='data-a47b6bce-18dd-46a7-8f05-460828915795' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>standard_name :</span></dt><dd>time</dd><dt><span>long_name :</span></dt><dd>time</dd><dt><span>axis :</span></dt><dd>T</dd><dt><span>step :</span></dt><dd>3</dd></dl></div><div class='xr-var-data'><pre>array([&#x27;2020-01-01T03:00:00.000000000&#x27;, &#x27;2020-04-01T03:00:00.000000000&#x27;,
-       &#x27;2020-07-01T03:00:00.000000000&#x27;], dtype=&#x27;datetime64[ns]&#x27;)</pre></div></li></ul></div></li><li class='xr-section-item'><input id='section-41cf364c-208e-4ea9-9536-865ae4464cca' class='xr-section-summary-in' type='checkbox'  ><label for='section-41cf364c-208e-4ea9-9536-865ae4464cca' class='xr-section-summary' >Data variables: <span>(17)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'><li class='xr-var-item'><div class='xr-var-name'><span>VHM0</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-d62323f0-3ccd-4e8f-9a53-b691adde6ff8' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-d62323f0-3ccd-4e8f-9a53-b691adde6ff8' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-e3255dc3-1c9a-4970-9f10-198b9fcc50a0' class='xr-var-data-in' type='checkbox'><label for='data-e3255dc3-1c9a-4970-9f10-198b9fcc50a0' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Spectral significant wave height (Hm0)</dd><dt><span>units :</span></dt><dd>m</dd><dt><span>standard_name :</span></dt><dd>sea_surface_wave_significant_height</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>100</dd></dl></div><div class='xr-var-data'><pre>array([[[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [5.48     , 5.47     , 5.44     , ...,       nan,       nan,
-               nan],
-        [5.45     , 5.44     , 5.4      , ...,       nan,       nan,
-               nan],
-        [5.4      , 5.39     , 5.3599997, ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-...
-        [4.5899997, 4.5899997, 4.5699997, ...,       nan,       nan,
-               nan],
-        [4.5899997, 4.6      , 4.5699997, ...,       nan,       nan,
-               nan],
-        [4.6      , 4.61     , 4.6      , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [2.54     , 2.52     , 2.48     , ...,       nan,       nan,
-               nan],
-        [2.54     , 2.53     , 2.5      , ...,       nan,       nan,
-               nan],
-        [2.54     , 2.53     , 2.51     , ...,       nan,       nan,
-               nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VMDR_WW</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-e1d81acf-5984-42f8-903d-c89fcff4bff8' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-e1d81acf-5984-42f8-903d-c89fcff4bff8' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-e45b99d7-d3f7-4e84-b61c-44e1eff5df11' class='xr-var-data-in' type='checkbox'><label for='data-e45b99d7-d3f7-4e84-b61c-44e1eff5df11' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Mean wind wave direction from</dd><dt><span>units :</span></dt><dd>degree</dd><dt><span>standard_name :</span></dt><dd>sea_surface_wind_wave_from_direction</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>101</dd></dl></div><div class='xr-var-data'><pre>array([[[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [254.53   , 254.98999, 255.32   , ...,       nan,       nan,
-               nan],
-        [254.23   , 254.64   , 254.92   , ...,       nan,       nan,
-               nan],
-        [254.07   , 254.39   , 254.73   , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-...
-        [269.68   , 272.91998, 276.91   , ...,       nan,       nan,
-               nan],
-        [273.58   , 276.7    , 280.32   , ...,       nan,       nan,
-               nan],
-        [276.1    , 279.68   , 283.09   , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [339.27   , 339.37   , 339.91   , ...,       nan,       nan,
-               nan],
-        [339.49   , 339.83002, 340.14   , ...,       nan,       nan,
-               nan],
-        [339.78   , 340.84   , 341.11   , ...,       nan,       nan,
-               nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VHM0_WW</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-4001edc8-eb44-485c-9a4f-7045a91e3fb4' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-4001edc8-eb44-485c-9a4f-7045a91e3fb4' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-8c841ecd-86a2-415f-8a88-c160ba32195d' class='xr-var-data-in' type='checkbox'><label for='data-8c841ecd-86a2-415f-8a88-c160ba32195d' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Spectral significant wind wave height</dd><dt><span>units :</span></dt><dd>m</dd><dt><span>standard_name :</span></dt><dd>sea_surface_wind_wave_significant_height</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>102</dd></dl></div><div class='xr-var-data'><pre>array([[[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [5.22      , 5.21      , 5.19      , ...,        nan,
-                nan,        nan],
-        [5.16      , 5.16      , 5.12      , ...,        nan,
-                nan,        nan],
-        [5.08      , 5.08      , 5.06      , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-...
-        [0.35      , 0.34      , 0.34      , ...,        nan,
-                nan,        nan],
-        [0.32999998, 0.32      , 0.32      , ...,        nan,
-                nan,        nan],
-        [0.31      , 0.29999998, 0.29999998, ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [1.12      , 1.15      , 1.2099999 , ...,        nan,
-                nan,        nan],
-        [1.16      , 1.1999999 , 1.24      , ...,        nan,
-                nan,        nan],
-        [1.2099999 , 1.25      , 1.3       , ...,        nan,
-                nan,        nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VMDR_SW1</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-3d620559-e2ed-4efa-a0fe-d376d9fa4e74' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-3d620559-e2ed-4efa-a0fe-d376d9fa4e74' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-d1ce9989-d285-43fb-87a8-f2dd9c6ceccc' class='xr-var-data-in' type='checkbox'><label for='data-d1ce9989-d285-43fb-87a8-f2dd9c6ceccc' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Mean primary swell wave direction from</dd><dt><span>units :</span></dt><dd>degree</dd><dt><span>standard_name :</span></dt><dd>sea_surface_primary_swell_wave_from_direction</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>107</dd></dl></div><div class='xr-var-data'><pre>array([[[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [317.82   , 312.97   , 312.07   , ...,       nan,       nan,
-               nan],
-        [320.14   , 314.11   , 312.43   , ...,       nan,       nan,
-               nan],
-        [318.84   , 314.32   , 312.65   , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-...
-        [314.56   , 312.76   , 311.28   , ...,       nan,       nan,
-               nan],
-        [311.26   , 309.57   , 309.24   , ...,       nan,       nan,
-               nan],
-        [309.21   , 309.22   , 309.2    , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [358.39   , 357.72998, 356.86   , ...,       nan,       nan,
-               nan],
-        [359.28   , 358.56   , 357.84998, ...,       nan,       nan,
-               nan],
-        [299.94   , 349.26   , 358.7    , ...,       nan,       nan,
-               nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VTM01_SW1</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-5bc8775f-aa22-4a92-bb49-cc3c2b5e1985' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-5bc8775f-aa22-4a92-bb49-cc3c2b5e1985' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-0e11e48b-f72c-4178-99ae-001d8e2d8bb4' class='xr-var-data-in' type='checkbox'><label for='data-0e11e48b-f72c-4178-99ae-001d8e2d8bb4' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Spectral moments (0,1) primary swell wave period</dd><dt><span>units :</span></dt><dd>s</dd><dt><span>standard_name :</span></dt><dd>sea_surface_primary_swell_wave_mean_period</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>226</dd></dl></div><div class='xr-var-data'><pre>array([[[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [8.38     , 8.84     , 8.94     , ...,       nan,       nan,
-               nan],
-        [8.17     , 8.73     , 8.91     , ...,       nan,       nan,
-               nan],
-        [8.429999 , 8.78     , 8.9      , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-...
-        [9.07     , 9.04     , 9.01     , ...,       nan,       nan,
-               nan],
-        [8.98     , 8.95     , 8.94     , ...,       nan,       nan,
-               nan],
-        [8.92     , 8.92     , 8.929999 , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [7.1099997, 7.1299996, 7.17     , ...,       nan,       nan,
-               nan],
-        [7.1099997, 7.12     , 7.16     , ...,       nan,       nan,
-               nan],
-        [7.0899997, 7.12     , 7.16     , ...,       nan,       nan,
-               nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VMDR_SW2</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-95886b37-bc79-46db-bdbf-e75ae6ece4c5' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-95886b37-bc79-46db-bdbf-e75ae6ece4c5' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-83004b97-3ec0-43ab-a00f-b9574f39ffb6' class='xr-var-data-in' type='checkbox'><label for='data-83004b97-3ec0-43ab-a00f-b9574f39ffb6' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Mean secondary swell wave direction from</dd><dt><span>units :</span></dt><dd>degree</dd><dt><span>standard_name :</span></dt><dd>sea_surface_secondary_swell_wave_from_direction</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>109</dd></dl></div><div class='xr-var-data'><pre>array([[[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [296.11   , 296.18   , 296.36   , ...,       nan,       nan,
-               nan],
-        [296.14   , 296.24   , 296.41998, ...,       nan,       nan,
-               nan],
-        [285.5    , 291.46   , 295.24   , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-...
-        [230.15   , 215.14   , 200.77   , ...,       nan,       nan,
-               nan],
-        [197.99   , 183.     , 180.     , ...,       nan,       nan,
-               nan],
-        [180.     , 180.     , 180.     , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [281.97   , 287.65   , 288.76   , ...,       nan,       nan,
-               nan],
-        [287.51   , 288.53   , 288.75   , ...,       nan,       nan,
-               nan],
-        [288.72998, 288.66998, 288.89   , ...,       nan,       nan,
-               nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VTM01_SW2</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-097baee6-e30d-46cb-91e9-22edef28079d' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-097baee6-e30d-46cb-91e9-22edef28079d' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-d407f51f-90d0-42a9-95f3-5380a431fe01' class='xr-var-data-in' type='checkbox'><label for='data-d407f51f-90d0-42a9-95f3-5380a431fe01' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Spectral moments (0,1) secondary swell wave period</dd><dt><span>units :</span></dt><dd>s</dd><dt><span>standard_name :</span></dt><dd>sea_surface_secondary_swell_wave_mean_period</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>227</dd></dl></div><div class='xr-var-data'><pre>array([[[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [11.55     , 11.559999 , 11.57     , ...,        nan,
-                nan,        nan],
-        [11.559999 , 11.559999 , 11.57     , ...,        nan,
-                nan,        nan],
-        [11.559999 , 11.57     , 11.58     , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-...
-        [ 5.5699997,  4.04     ,  2.76     , ...,        nan,
-                nan,        nan],
-        [ 2.6      ,  1.13     ,  0.84     , ...,        nan,
-                nan,        nan],
-        [ 0.84     ,  0.84     ,  0.84     , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [ 4.98     ,  4.6      ,  4.54     , ...,        nan,
-                nan,        nan],
-        [ 4.37     ,  4.49     ,  4.58     , ...,        nan,
-                nan,        nan],
-        [ 4.5099998,  4.5099998,  4.6      , ...,        nan,
-                nan,        nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VMDR</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-859c6d1b-66cc-4326-81e4-6980ad83ad89' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-859c6d1b-66cc-4326-81e4-6980ad83ad89' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-47fddf2f-5d7a-4c88-a7ad-4c2daf9d2f18' class='xr-var-data-in' type='checkbox'><label for='data-47fddf2f-5d7a-4c88-a7ad-4c2daf9d2f18' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Mean wave direction from (Mdir)</dd><dt><span>units :</span></dt><dd>degree</dd><dt><span>standard_name :</span></dt><dd>sea_surface_wave_from_direction</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>200</dd></dl></div><div class='xr-var-data'><pre>array([[[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [259.     , 259.62   , 260.04   , ...,       nan,       nan,
-               nan],
-        [258.72998, 259.33002, 259.75   , ...,       nan,       nan,
-               nan],
-        [258.54   , 259.09   , 259.62   , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-...
-        [309.18   , 309.11   , 309.03998, ...,       nan,       nan,
-               nan],
-        [309.12   , 309.09   , 309.09998, ...,       nan,       nan,
-               nan],
-        [309.07   , 309.09998, 309.09998, ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [353.64   , 352.77   , 351.71   , ...,       nan,       nan,
-               nan],
-        [353.95   , 353.18   , 352.22998, ...,       nan,       nan,
-               nan],
-        [354.22   , 353.52   , 352.72   , ...,       nan,       nan,
-               nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VTM10</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-3f246209-acf6-4bcd-b264-645aac4ed7f7' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-3f246209-acf6-4bcd-b264-645aac4ed7f7' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-35978ed3-79c1-43dd-844c-9848afb6a083' class='xr-var-data-in' type='checkbox'><label for='data-35978ed3-79c1-43dd-844c-9848afb6a083' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Spectral moments (-1,0) wave period (Tm-10)</dd><dt><span>units :</span></dt><dd>s</dd><dt><span>standard_name :</span></dt><dd>sea_surface_wave_mean_period_from_variance_spectral_density_inverse_frequency_moment</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>201</dd></dl></div><div class='xr-var-data'><pre>array([[[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [ 9.469999 ,  9.44     ,  9.4      , ...,        nan,
-                nan,        nan],
-        [ 9.46     ,  9.429999 ,  9.389999 , ...,        nan,
-                nan,        nan],
-        [ 9.429999 ,  9.41     ,  9.38     , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-...
-        [10.639999 , 10.65     , 10.65     , ...,        nan,
-                nan,        nan],
-        [10.63     , 10.639999 , 10.639999 , ...,        nan,
-                nan,        nan],
-        [10.62     , 10.62     , 10.63     , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [ 7.69     ,  7.66     ,  7.62     , ...,        nan,
-                nan,        nan],
-        [ 7.6499996,  7.6299996,  7.5899997, ...,        nan,
-                nan,        nan],
-        [ 7.6099997,  7.58     ,  7.5499997, ...,        nan,
-                nan,        nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VHM0_SW1</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-62ec9d91-a7f9-4631-82f8-7e1103b617de' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-62ec9d91-a7f9-4631-82f8-7e1103b617de' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-1e998427-a83f-4064-a02d-dc870ba91c09' class='xr-var-data-in' type='checkbox'><label for='data-1e998427-a83f-4064-a02d-dc870ba91c09' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Spectral significant primary swell wave height</dd><dt><span>units :</span></dt><dd>m</dd><dt><span>standard_name :</span></dt><dd>sea_surface_primary_swell_wave_significant_height</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>202</dd></dl></div><div class='xr-var-data'><pre>array([[[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [0.87      , 0.66999996, 0.64      , ...,        nan,
-                nan,        nan],
-        [0.96999997, 0.71999997, 0.65      , ...,        nan,
-                nan,        nan],
-        [0.96999997, 0.76      , 0.66999996, ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-...
-        [4.36      , 4.44      , 4.47      , ...,        nan,
-                nan,        nan],
-        [4.5       , 4.5699997 , 4.56      , ...,        nan,
-                nan,        nan],
-        [4.5899997 , 4.6       , 4.5899997 , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [2.25      , 2.21      , 2.1399999 , ...,        nan,
-                nan,        nan],
-        [2.23      , 2.2       , 2.1299999 , ...,        nan,
-                nan,        nan],
-        [2.21      , 2.1699998 , 2.12      , ...,        nan,
-                nan,        nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VHM0_SW2</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-5a598cc2-92c9-4826-ba07-c3af0da4247e' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-5a598cc2-92c9-4826-ba07-c3af0da4247e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-9c68561c-a88d-40e6-ac32-8480d3f1432b' class='xr-var-data-in' type='checkbox'><label for='data-9c68561c-a88d-40e6-ac32-8480d3f1432b' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Spectral significant secondary swell wave height</dd><dt><span>units :</span></dt><dd>m</dd><dt><span>standard_name :</span></dt><dd>sea_surface_secondary_swell_wave_significant_height</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>203</dd></dl></div><div class='xr-var-data'><pre>array([[[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [0.55      , 0.55      , 0.55      , ...,        nan,
-                nan,        nan],
-        [0.53      , 0.53      , 0.53      , ...,        nan,
-                nan,        nan],
-        [0.5       , 0.51      , 0.51      , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-...
-        [1.13      , 0.76      , 0.45999998, ...,        nan,
-                nan,        nan],
-        [0.42      , 0.07      , 0.        , ...,        nan,
-                nan,        nan],
-        [0.        , 0.        , 0.        , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [0.24      , 0.22999999, 0.24      , ...,        nan,
-                nan,        nan],
-        [0.25      , 0.24      , 0.24      , ...,        nan,
-                nan,        nan],
-        [0.22999999, 0.22999999, 0.24      , ...,        nan,
-                nan,        nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VTPK</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-6f88c713-f549-41c9-9f41-b94d05b9ea1e' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-6f88c713-f549-41c9-9f41-b94d05b9ea1e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-37e99172-469d-40ca-95a1-1be46ed214ee' class='xr-var-data-in' type='checkbox'><label for='data-37e99172-469d-40ca-95a1-1be46ed214ee' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Wave period at spectral peak / peak period (Tp)</dd><dt><span>units :</span></dt><dd>s</dd><dt><span>standard_name :</span></dt><dd>sea_surface_wave_period_at_variance_spectral_density_maximum</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>204</dd></dl></div><div class='xr-var-data'><pre>array([[[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [10.78     , 10.76     , 10.73     , ...,        nan,
-                nan,        nan],
-        [10.7699995, 10.76     , 10.73     , ...,        nan,
-                nan,        nan],
-        [10.76     , 10.74     , 10.719999 , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-...
-        [12.13     , 12.139999 , 12.139999 , ...,        nan,
-                nan,        nan],
-        [12.12     , 12.13     , 12.139999 , ...,        nan,
-                nan,        nan],
-        [12.12     , 12.12     , 12.13     , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [ 8.96     ,  8.95     ,  8.92     , ...,        nan,
-                nan,        nan],
-        [ 8.929999 ,  8.91     ,  8.889999 , ...,        nan,
-                nan,        nan],
-        [ 8.889999 ,  8.87     ,  8.86     , ...,        nan,
-                nan,        nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VSDX</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-f8d37f7a-7f5d-416d-b1fc-927d3e201aba' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-f8d37f7a-7f5d-416d-b1fc-927d3e201aba' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-75e1e21c-38fa-4833-9fad-b1c74f5cd712' class='xr-var-data-in' type='checkbox'><label for='data-75e1e21c-38fa-4833-9fad-b1c74f5cd712' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Stokes drift U</dd><dt><span>units :</span></dt><dd>m s-1</dd><dt><span>standard_name :</span></dt><dd>sea_surface_wave_stokes_drift_x_velocity</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>215</dd></dl></div><div class='xr-var-data'><pre>array([[[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [0.25      , 0.25      , 0.25      , ...,        nan,
-                nan,        nan],
-        [0.25      , 0.25      , 0.25      , ...,        nan,
-                nan,        nan],
-        [0.24      , 0.24      , 0.24      , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-...
-        [0.09999999, 0.09999999, 0.09999999, ...,        nan,
-                nan,        nan],
-        [0.09999999, 0.09999999, 0.09999999, ...,        nan,
-                nan,        nan],
-        [0.09999999, 0.09999999, 0.09999999, ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [0.03      , 0.03      , 0.04      , ...,        nan,
-                nan,        nan],
-        [0.03      , 0.03      , 0.04      , ...,        nan,
-                nan,        nan],
-        [0.03      , 0.03      , 0.04      , ...,        nan,
-                nan,        nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VSDY</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-0bdf7d7b-e106-43e1-b597-cb9ec0145ceb' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-0bdf7d7b-e106-43e1-b597-cb9ec0145ceb' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-c6ae28ae-f0bb-4c51-ba26-06344994c6ae' class='xr-var-data-in' type='checkbox'><label for='data-c6ae28ae-f0bb-4c51-ba26-06344994c6ae' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Stokes drift V</dd><dt><span>units :</span></dt><dd>m s-1</dd><dt><span>standard_name :</span></dt><dd>sea_surface_wave_stokes_drift_y_velocity</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>216</dd></dl></div><div class='xr-var-data'><pre>array([[[  nan,   nan,   nan, ...,   nan,   nan,   nan],
-        [  nan,   nan,   nan, ...,   nan,   nan,   nan],
-        [  nan,   nan,   nan, ...,   nan,   nan,   nan],
-        ...,
-        [ 0.07,  0.07,  0.07, ...,   nan,   nan,   nan],
-        [ 0.07,  0.07,  0.07, ...,   nan,   nan,   nan],
-        [ 0.06,  0.06,  0.06, ...,   nan,   nan,   nan]],
-
-       [[  nan,   nan,   nan, ...,   nan,   nan,   nan],
-        [  nan,   nan,   nan, ...,   nan,   nan,   nan],
-        [  nan,   nan,   nan, ...,   nan,   nan,   nan],
-        ...,
-        [-0.07, -0.07, -0.07, ...,   nan,   nan,   nan],
-        [-0.07, -0.07, -0.08, ...,   nan,   nan,   nan],
-        [-0.08, -0.08, -0.08, ...,   nan,   nan,   nan]],
-
-       [[  nan,   nan,   nan, ...,   nan,   nan,   nan],
-        [  nan,   nan,   nan, ...,   nan,   nan,   nan],
-        [  nan,   nan,   nan, ...,   nan,   nan,   nan],
-        ...,
-        [-0.12, -0.12, -0.12, ...,   nan,   nan,   nan],
-        [-0.12, -0.12, -0.13, ...,   nan,   nan,   nan],
-        [-0.12, -0.13, -0.13, ...,   nan,   nan,   nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VPED</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-bc4cc15d-ae2c-4edb-9e20-0ad376f400a0' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-bc4cc15d-ae2c-4edb-9e20-0ad376f400a0' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-3a2abc81-523e-4fc8-acf4-241cc5e0041f' class='xr-var-data-in' type='checkbox'><label for='data-3a2abc81-523e-4fc8-acf4-241cc5e0041f' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Wave principal direction at spectral peak</dd><dt><span>units :</span></dt><dd>degree</dd><dt><span>standard_name :</span></dt><dd>sea_surface_wave_from_direction_at_variance_spectral_density_maximum</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>[]</dd></dl></div><div class='xr-var-data'><pre>array([[[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [262.5     , 262.5     , 262.5     , ...,        nan,
-                nan,        nan],
-        [262.5     , 262.5     , 262.5     , ...,        nan,
-                nan,        nan],
-        [262.5     , 262.5     , 262.5     , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-...
-        [307.5     , 307.5     , 307.5     , ...,        nan,
-                nan,        nan],
-        [307.5     , 307.5     , 307.5     , ...,        nan,
-                nan,        nan],
-        [307.5     , 307.5     , 307.5     , ...,        nan,
-                nan,        nan]],
-
-       [[       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        [       nan,        nan,        nan, ...,        nan,
-                nan,        nan],
-        ...,
-        [  7.5     ,  34.33    , 137.83    , ...,        nan,
-                nan,        nan],
-        [  7.5     ,  14.639999,  81.4     , ...,        nan,
-                nan,        nan],
-        [  7.5     ,   7.5     ,   7.5     , ...,        nan,
-                nan,        nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VTM02</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-b14d7ef5-fa3b-4e8c-9384-24116ba08dcd' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-b14d7ef5-fa3b-4e8c-9384-24116ba08dcd' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-47daa24b-ffb4-4ef7-a4ea-f45d67907d58' class='xr-var-data-in' type='checkbox'><label for='data-47daa24b-ffb4-4ef7-a4ea-f45d67907d58' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Spectral moments (0,2) wave period (Tm02)</dd><dt><span>units :</span></dt><dd>s</dd><dt><span>standard_name :</span></dt><dd>sea_surface_wave_mean_period_from_variance_spectral_density_second_frequency_moment</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>221</dd></dl></div><div class='xr-var-data'><pre>array([[[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [7.83     , 7.81     , 7.7599998, ...,       nan,       nan,
-               nan],
-        [7.8199997, 7.7999997, 7.75     , ...,       nan,       nan,
-               nan],
-        [7.7999997, 7.7799997, 7.75     , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-...
-        [8.63     , 8.639999 , 8.639999 , ...,       nan,       nan,
-               nan],
-        [8.63     , 8.65     , 8.639999 , ...,       nan,       nan,
-               nan],
-        [8.63     , 8.65     , 8.65     , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [6.08     , 6.0499997, 6.       , ...,       nan,       nan,
-               nan],
-        [6.06     , 6.0299997, 5.99     , ...,       nan,       nan,
-               nan],
-        [6.04     , 6.02     , 5.98     , ...,       nan,       nan,
-               nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>VTM01_WW</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-9d58d0ed-86f1-4ab0-a5fa-93346e1b702f' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-9d58d0ed-86f1-4ab0-a5fa-93346e1b702f' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-915fa8a1-2912-471a-aa11-b795d9e2f554' class='xr-var-data-in' type='checkbox'><label for='data-915fa8a1-2912-471a-aa11-b795d9e2f554' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Spectral moments (0,1) wind wave period</dd><dt><span>units :</span></dt><dd>s</dd><dt><span>standard_name :</span></dt><dd>sea_surface_wind_wave_mean_period</dd><dt><span>cell_methods :</span></dt><dd>time:point area:mean</dd><dt><span>type_of_analysis :</span></dt><dd>spectral analysis</dd><dt><span>WMO_code :</span></dt><dd>223</dd></dl></div><div class='xr-var-data'><pre>array([[[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [8.5      , 8.47     , 8.42     , ...,       nan,       nan,
-               nan],
-        [8.48     , 8.45     , 8.4      , ...,       nan,       nan,
-               nan],
-        [8.44     , 8.42     , 8.389999 , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-...
-        [2.51     , 2.46     , 2.45     , ...,       nan,       nan,
-               nan],
-        [2.46     , 2.4199998, 2.4099998, ...,       nan,       nan,
-               nan],
-        [2.3999999, 2.36     , 2.35     , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [4.13     , 4.19     , 4.2799997, ...,       nan,       nan,
-               nan],
-        [4.22     , 4.2799997, 4.35     , ...,       nan,       nan,
-               nan],
-        [4.3199997, 4.4      , 4.48     , ...,       nan,       nan,
-               nan]]], dtype=float32)</pre></div></li></ul></div></li><li class='xr-section-item'><input id='section-3025d323-a092-4ee5-bac2-a5e93c9125de' class='xr-section-summary-in' type='checkbox'  ><label for='section-3025d323-a092-4ee5-bac2-a5e93c9125de' class='xr-section-summary' >Attributes: <span>(27)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><dl class='xr-attrs'><dt><span>Conventions :</span></dt><dd>CF-1.6</dd><dt><span>time_coverage_start :</span></dt><dd>20200101-03:00:00</dd><dt><span>time_coverage_end :</span></dt><dd>20200102-00:00:00</dd><dt><span>date_created :</span></dt><dd>20200102-06:22:00</dd><dt><span>product_type :</span></dt><dd>hindcast</dd><dt><span>product :</span></dt><dd>GLOBAL_ANALYSIS_FORECAST_WAV_001_027</dd><dt><span>product_ref_date :</span></dt><dd>20200101-00:00:00</dd><dt><span>product_range :</span></dt><dd>D-1</dd><dt><span>product_user_manual :</span></dt><dd>http://marine.copernicus.eu/documents/PUM/CMEMS-GLO-PUM-001-027.pdf</dd><dt><span>quality_information_document :</span></dt><dd> http://marine.copernicus.eu/documents/QUID/CMEMS-GLO-QUID-001-027.</dd><dt><span>dataset :</span></dt><dd>global-analysis-forecast-wav-001-027</dd><dt><span>title :</span></dt><dd>Mean fields from global wave model MFWAM of Meteo-France with ECMWF forcing</dd><dt><span>institution :</span></dt><dd>METEO-FRANCE</dd><dt><span>references :</span></dt><dd>http://marine.copernicus.eu</dd><dt><span>credit :</span></dt><dd>E.U. Copernicus Marine Service Information (CMEMS)</dd><dt><span>licence :</span></dt><dd>http://marine.copernicus.eu/services-portfolio/service-commitments-and</dd><dt><span>contact :</span></dt><dd>servicedesk.cmems@mercator-ocean.eu</dd><dt><span>producer :</span></dt><dd>CMEMS - Global Monitoring and Forecasting Centre</dd><dt><span>area :</span></dt><dd>GLO</dd><dt><span>geospatial_lon_min :</span></dt><dd>-180.0</dd><dt><span>geospatial_lon_max :</span></dt><dd>179.9167</dd><dt><span>geospatial_lon_step :</span></dt><dd>0.08332825</dd><dt><span>geospatial_lon_units :</span></dt><dd>degree</dd><dt><span>geospatial_lat_min :</span></dt><dd>-80.0</dd><dt><span>geospatial_lat_max :</span></dt><dd>90.0</dd><dt><span>geospatial_lat_step :</span></dt><dd>0.08333588</dd><dt><span>geospatial_lat_units :</span></dt><dd>degree</dd></dl></div></li></ul></div></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Unnamed: 0</th>
+      <th>MMSI</th>
+      <th>BaseDateTime</th>
+      <th>LAT</th>
+      <th>LON</th>
+      <th>SOG</th>
+      <th>COG</th>
+      <th>Heading</th>
+      <th>VesselName</th>
+      <th>IMO</th>
+      <th>CallSign</th>
+      <th>VesselType</th>
+      <th>Status</th>
+      <th>Length</th>
+      <th>Width</th>
+      <th>Draft</th>
+      <th>Cargo</th>
+      <th>TranscieverClass</th>
+      <th>GrossTonnage</th>
+      <th>EstimatedTime</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>9</td>
+      <td>477628100</td>
+      <td>2020-01-01 00:00:01</td>
+      <td>36.80096</td>
+      <td>-75.22302</td>
+      <td>12.8</td>
+      <td>-128.7</td>
+      <td>283.0</td>
+      <td>NINGBO SEAL</td>
+      <td>IMO9579066</td>
+      <td>VRJD3</td>
+      <td>70.0</td>
+      <td>0.0</td>
+      <td>225.0</td>
+      <td>32.0</td>
+      <td>14.3</td>
+      <td>70.0</td>
+      <td>B</td>
+      <td>4824.00</td>
+      <td>2020-01-01 00:00:00</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>17</td>
+      <td>538002845</td>
+      <td>2020-01-01 00:00:10</td>
+      <td>26.08420</td>
+      <td>-79.48273</td>
+      <td>13.2</td>
+      <td>189.0</td>
+      <td>187.0</td>
+      <td>YASA GOLDEN DARDANEL</td>
+      <td>IMO9339985</td>
+      <td>V7ME9</td>
+      <td>80.0</td>
+      <td>0.0</td>
+      <td>245.0</td>
+      <td>42.0</td>
+      <td>15.0</td>
+      <td>89.0</td>
+      <td>B</td>
+      <td>6894.30</td>
+      <td>2020-01-01 00:00:00</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>50</td>
+      <td>249974000</td>
+      <td>2020-01-01 00:00:06</td>
+      <td>29.34368</td>
+      <td>-94.74366</td>
+      <td>10.2</td>
+      <td>85.7</td>
+      <td>86.0</td>
+      <td>PTI RHINE</td>
+      <td>IMO9313462</td>
+      <td>9HA4456</td>
+      <td>80.0</td>
+      <td>0.0</td>
+      <td>183.0</td>
+      <td>32.0</td>
+      <td>13.2</td>
+      <td>81.0</td>
+      <td>B</td>
+      <td>3923.52</td>
+      <td>2020-01-01 00:00:00</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>55</td>
+      <td>477542400</td>
+      <td>2020-01-01 00:00:01</td>
+      <td>37.76973</td>
+      <td>-122.35415</td>
+      <td>10.6</td>
+      <td>-87.5</td>
+      <td>326.0</td>
+      <td>ATLANTIC PISCES</td>
+      <td>IMO9392781</td>
+      <td>VRFN3</td>
+      <td>80.0</td>
+      <td>0.0</td>
+      <td>183.0</td>
+      <td>32.0</td>
+      <td>12.2</td>
+      <td>80.0</td>
+      <td>B</td>
+      <td>3923.52</td>
+      <td>2020-01-01 00:00:00</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>69</td>
+      <td>636016431</td>
+      <td>2020-01-01 00:00:10</td>
+      <td>26.89363</td>
+      <td>-79.20262</td>
+      <td>19.7</td>
+      <td>154.9</td>
+      <td>155.0</td>
+      <td>MSC VAISHNAVI R</td>
+      <td>IMO9227340</td>
+      <td>A8RL2</td>
+      <td>70.0</td>
+      <td>0.0</td>
+      <td>282.0</td>
+      <td>32.0</td>
+      <td>12.5</td>
+      <td>71.0</td>
+      <td>B</td>
+      <td>6046.08</td>
+      <td>2020-01-01 00:00:00</td>
+    </tr>
+    <tr>
+      <th>...</th>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+    </tr>
+    <tr>
+      <th>720152</th>
+      <td>30502227</td>
+      <td>441310000</td>
+      <td>2020-10-01 23:59:34</td>
+      <td>26.05327</td>
+      <td>-79.84955</td>
+      <td>19.7</td>
+      <td>4.2</td>
+      <td>5.0</td>
+      <td>GLOVIS SOLOMON</td>
+      <td>IMO9445409</td>
+      <td>D7GS</td>
+      <td>70.0</td>
+      <td>0.0</td>
+      <td>232.0</td>
+      <td>32.0</td>
+      <td>9.4</td>
+      <td>70.0</td>
+      <td>B</td>
+      <td>4974.08</td>
+      <td>2020-10-02 00:00:00</td>
+    </tr>
+    <tr>
+      <th>720153</th>
+      <td>30502254</td>
+      <td>636013708</td>
+      <td>2020-10-01 23:58:58</td>
+      <td>28.44555</td>
+      <td>-95.59912</td>
+      <td>12.9</td>
+      <td>56.0</td>
+      <td>57.0</td>
+      <td>NEW ACTIVITY</td>
+      <td>IMO9361524</td>
+      <td>A8OU2</td>
+      <td>80.0</td>
+      <td>0.0</td>
+      <td>228.0</td>
+      <td>42.0</td>
+      <td>14.8</td>
+      <td>80.0</td>
+      <td>B</td>
+      <td>6415.92</td>
+      <td>2020-10-02 00:00:00</td>
+    </tr>
+    <tr>
+      <th>720154</th>
+      <td>30502305</td>
+      <td>218092000</td>
+      <td>2020-10-01 23:59:36</td>
+      <td>39.18945</td>
+      <td>-130.91286</td>
+      <td>19.9</td>
+      <td>-129.6</td>
+      <td>280.0</td>
+      <td>HANOVER EXPRESS</td>
+      <td>IMO9343716</td>
+      <td>DFGX2</td>
+      <td>70.0</td>
+      <td>0.0</td>
+      <td>336.0</td>
+      <td>42.0</td>
+      <td>14.6</td>
+      <td>79.0</td>
+      <td>B</td>
+      <td>9455.04</td>
+      <td>2020-10-02 00:00:00</td>
+    </tr>
+    <tr>
+      <th>720155</th>
+      <td>30502324</td>
+      <td>636017617</td>
+      <td>2020-10-01 23:57:40</td>
+      <td>17.18697</td>
+      <td>-67.33857</td>
+      <td>11.7</td>
+      <td>110.0</td>
+      <td>110.0</td>
+      <td>NORDIC STAVANGER</td>
+      <td>IMO9514377</td>
+      <td>D5LX3</td>
+      <td>70.0</td>
+      <td>0.0</td>
+      <td>189.0</td>
+      <td>32.0</td>
+      <td>12.7</td>
+      <td>70.0</td>
+      <td>B</td>
+      <td>4052.16</td>
+      <td>2020-10-02 00:00:00</td>
+    </tr>
+    <tr>
+      <th>720156</th>
+      <td>30502456</td>
+      <td>636015168</td>
+      <td>2020-10-01 23:54:41</td>
+      <td>37.51332</td>
+      <td>-68.00148</td>
+      <td>10.9</td>
+      <td>77.4</td>
+      <td>62.0</td>
+      <td>AQUAFORTUNE</td>
+      <td>IMO9426427</td>
+      <td>A8ZA6</td>
+      <td>70.0</td>
+      <td>0.0</td>
+      <td>289.0</td>
+      <td>45.0</td>
+      <td>18.0</td>
+      <td>71.0</td>
+      <td>B</td>
+      <td>8713.35</td>
+      <td>2020-10-02 00:00:00</td>
+    </tr>
+  </tbody>
+</table>
+<p>720157 rows × 20 columns</p>
+</div>
 
 
 
 
 ```python
-ds_phy_jan = xr.open_dataset(phy_jan)
-ds_phy_apr = xr.open_dataset(phy_apr)
-ds_phy_jul = xr.open_dataset(phy_jul)
-#ds_phy_oct = xr.open_dataset(phy_oct)
-
-ds_phy_all = [ds_phy_jan, ds_phy_apr, ds_phy_jul]
-#ds_phy_all = [ds_phy_jan, ds_phy_apr, ds_phy_jul, ds_phy_oct]
-datasets_phy = []
-
-for ds_month in ds_phy_all:
-  
-  lon_min = get_closest(ds_month.longitude.data, bbox[0][0])
-  lon_max = get_closest(ds_month.longitude.data, bbox[1][0])
-  lat_min = get_closest(ds_month.latitude.data, bbox[0][1])
-  lat_max = get_closest(ds_month.latitude.data, bbox[1][1])
-
-  ds_phy_month_reg = ds_month.isel(time = 0, longitude = slice(lon_min, lon_max), latitude = slice(lat_min, lat_max))
-  datasets_phy.append(ds_phy_month_reg)
-
-ds_phy = xr.concat(datasets_phy, dim = 'ds_month')
-ds_phy
-```
-
-
-
-
-<div><svg style="position: absolute; width: 0; height: 0; overflow: hidden">
-<defs>
-<symbol id="icon-database" viewBox="0 0 32 32">
-<path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path>
-<path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
-<path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path>
-</symbol>
-<symbol id="icon-file-text2" viewBox="0 0 32 32">
-<path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path>
-<path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
-<path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
-<path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path>
-</symbol>
-</defs>
-</svg>
-<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
- *
- */
-
-:root {
-  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
-  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
-  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
-  --xr-border-color: var(--jp-border-color2, #e0e0e0);
-  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
-  --xr-background-color: var(--jp-layout-color0, white);
-  --xr-background-color-row-even: var(--jp-layout-color1, white);
-  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
-}
-
-html[theme=dark],
-body.vscode-dark {
-  --xr-font-color0: rgba(255, 255, 255, 1);
-  --xr-font-color2: rgba(255, 255, 255, 0.54);
-  --xr-font-color3: rgba(255, 255, 255, 0.38);
-  --xr-border-color: #1F1F1F;
-  --xr-disabled-color: #515151;
-  --xr-background-color: #111111;
-  --xr-background-color-row-even: #111111;
-  --xr-background-color-row-odd: #313131;
-}
-
-.xr-wrap {
-  display: block;
-  min-width: 300px;
-  max-width: 700px;
-}
-
-.xr-text-repr-fallback {
-  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
-  display: none;
-}
-
-.xr-header {
-  padding-top: 6px;
-  padding-bottom: 6px;
-  margin-bottom: 4px;
-  border-bottom: solid 1px var(--xr-border-color);
-}
-
-.xr-header > div,
-.xr-header > ul {
-  display: inline;
-  margin-top: 0;
-  margin-bottom: 0;
-}
-
-.xr-obj-type,
-.xr-array-name {
-  margin-left: 2px;
-  margin-right: 10px;
-}
-
-.xr-obj-type {
-  color: var(--xr-font-color2);
-}
-
-.xr-sections {
-  padding-left: 0 !important;
-  display: grid;
-  grid-template-columns: 150px auto auto 1fr 20px 20px;
-}
-
-.xr-section-item {
-  display: contents;
-}
-
-.xr-section-item input {
-  display: none;
-}
-
-.xr-section-item input + label {
-  color: var(--xr-disabled-color);
-}
-
-.xr-section-item input:enabled + label {
-  cursor: pointer;
-  color: var(--xr-font-color2);
-}
-
-.xr-section-item input:enabled + label:hover {
-  color: var(--xr-font-color0);
-}
-
-.xr-section-summary {
-  grid-column: 1;
-  color: var(--xr-font-color2);
-  font-weight: 500;
-}
-
-.xr-section-summary > span {
-  display: inline-block;
-  padding-left: 0.5em;
-}
-
-.xr-section-summary-in:disabled + label {
-  color: var(--xr-font-color2);
-}
-
-.xr-section-summary-in + label:before {
-  display: inline-block;
-  content: '►';
-  font-size: 11px;
-  width: 15px;
-  text-align: center;
-}
-
-.xr-section-summary-in:disabled + label:before {
-  color: var(--xr-disabled-color);
-}
-
-.xr-section-summary-in:checked + label:before {
-  content: '▼';
-}
-
-.xr-section-summary-in:checked + label > span {
-  display: none;
-}
-
-.xr-section-summary,
-.xr-section-inline-details {
-  padding-top: 4px;
-  padding-bottom: 4px;
-}
-
-.xr-section-inline-details {
-  grid-column: 2 / -1;
-}
-
-.xr-section-details {
-  display: none;
-  grid-column: 1 / -1;
-  margin-bottom: 5px;
-}
-
-.xr-section-summary-in:checked ~ .xr-section-details {
-  display: contents;
-}
-
-.xr-array-wrap {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: 20px auto;
-}
-
-.xr-array-wrap > label {
-  grid-column: 1;
-  vertical-align: top;
-}
-
-.xr-preview {
-  color: var(--xr-font-color3);
-}
-
-.xr-array-preview,
-.xr-array-data {
-  padding: 0 5px !important;
-  grid-column: 2;
-}
-
-.xr-array-data,
-.xr-array-in:checked ~ .xr-array-preview {
-  display: none;
-}
-
-.xr-array-in:checked ~ .xr-array-data,
-.xr-array-preview {
-  display: inline-block;
-}
-
-.xr-dim-list {
-  display: inline-block !important;
-  list-style: none;
-  padding: 0 !important;
-  margin: 0;
-}
-
-.xr-dim-list li {
-  display: inline-block;
-  padding: 0;
-  margin: 0;
-}
-
-.xr-dim-list:before {
-  content: '(';
-}
-
-.xr-dim-list:after {
-  content: ')';
-}
-
-.xr-dim-list li:not(:last-child):after {
-  content: ',';
-  padding-right: 5px;
-}
-
-.xr-has-index {
-  font-weight: bold;
-}
-
-.xr-var-list,
-.xr-var-item {
-  display: contents;
-}
-
-.xr-var-item > div,
-.xr-var-item label,
-.xr-var-item > .xr-var-name span {
-  background-color: var(--xr-background-color-row-even);
-  margin-bottom: 0;
-}
-
-.xr-var-item > .xr-var-name:hover span {
-  padding-right: 5px;
-}
-
-.xr-var-list > li:nth-child(odd) > div,
-.xr-var-list > li:nth-child(odd) > label,
-.xr-var-list > li:nth-child(odd) > .xr-var-name span {
-  background-color: var(--xr-background-color-row-odd);
-}
-
-.xr-var-name {
-  grid-column: 1;
-}
-
-.xr-var-dims {
-  grid-column: 2;
-}
-
-.xr-var-dtype {
-  grid-column: 3;
-  text-align: right;
-  color: var(--xr-font-color2);
-}
-
-.xr-var-preview {
-  grid-column: 4;
-}
-
-.xr-var-name,
-.xr-var-dims,
-.xr-var-dtype,
-.xr-preview,
-.xr-attrs dt {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding-right: 10px;
-}
-
-.xr-var-name:hover,
-.xr-var-dims:hover,
-.xr-var-dtype:hover,
-.xr-attrs dt:hover {
-  overflow: visible;
-  width: auto;
-  z-index: 1;
-}
-
-.xr-var-attrs,
-.xr-var-data {
-  display: none;
-  background-color: var(--xr-background-color) !important;
-  padding-bottom: 5px !important;
-}
-
-.xr-var-attrs-in:checked ~ .xr-var-attrs,
-.xr-var-data-in:checked ~ .xr-var-data {
-  display: block;
-}
-
-.xr-var-data > table {
-  float: right;
-}
-
-.xr-var-name span,
-.xr-var-data,
-.xr-attrs {
-  padding-left: 25px !important;
-}
-
-.xr-attrs,
-.xr-var-attrs,
-.xr-var-data {
-  grid-column: 1 / -1;
-}
-
-dl.xr-attrs {
-  padding: 0;
-  margin: 0;
-  display: grid;
-  grid-template-columns: 125px auto;
-}
-
-.xr-attrs dt,
-.xr-attrs dd {
-  padding: 0;
-  margin: 0;
-  float: left;
-  padding-right: 10px;
-  width: auto;
-}
-
-.xr-attrs dt {
-  font-weight: normal;
-  grid-column: 1;
-}
-
-.xr-attrs dt:hover span {
-  display: inline-block;
-  background: var(--xr-background-color);
-  padding-right: 10px;
-}
-
-.xr-attrs dd {
-  grid-column: 2;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.xr-icon-database,
-.xr-icon-file-text2 {
-  display: inline-block;
-  vertical-align: middle;
-  width: 1em;
-  height: 1.5em !important;
-  stroke-width: 0;
-  stroke: currentColor;
-  fill: currentColor;
-}
-</style><pre class='xr-text-repr-fallback'>&lt;xarray.Dataset&gt;
-Dimensions:    (depth: 50, ds_month: 3, latitude: 132, longitude: 240)
-Coordinates:
-  * longitude  (longitude) float32 10.0 10.08 10.17 10.25 ... 29.75 29.83 29.92
-  * latitude   (latitude) float32 54.0 54.08 54.17 54.25 ... 64.75 64.83 64.92
-  * depth      (depth) float32 0.494 1.541 2.646 ... 5.275e+03 5.728e+03
-    time       (ds_month) datetime64[ns] 2020-01-01T12:00:00 ... 2020-07-01T1...
-Dimensions without coordinates: ds_month
-Data variables:
-    mlotst     (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    zos        (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    bottomT    (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    sithick    (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    siconc     (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    usi        (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    vsi        (ds_month, latitude, longitude) float32 nan nan nan ... nan nan
-    thetao     (ds_month, depth, latitude, longitude) float32 nan nan ... nan
-    so         (ds_month, depth, latitude, longitude) float32 nan nan ... nan
-    uo         (ds_month, depth, latitude, longitude) float32 nan nan ... nan
-    vo         (ds_month, depth, latitude, longitude) float32 nan nan ... nan
-Attributes: (12/24)
-    title:              daily mean fields from Global Ocean Physics Analysis ...
-    easting:            longitude
-    northing:           latitude
-    history:            2020/01/12 21:22:06 MERCATOR OCEAN Netcdf creation
-    source:             MERCATOR PSY4V3R1
-    institution:        MERCATOR OCEAN
-    ...                 ...
-    longitude_min:      -180.0
-    longitude_max:      179.91667
-    latitude_min:       -80.0
-    latitude_max:       90.0
-    z_min:              0.494025
-    z_max:              5727.917</pre><div class='xr-wrap' hidden><div class='xr-header'><div class='xr-obj-type'>xarray.Dataset</div></div><ul class='xr-sections'><li class='xr-section-item'><input id='section-c3f7cbed-67b5-4774-a55f-39d9ec9d64de' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-c3f7cbed-67b5-4774-a55f-39d9ec9d64de' class='xr-section-summary'  title='Expand/collapse section'>Dimensions:</label><div class='xr-section-inline-details'><ul class='xr-dim-list'><li><span class='xr-has-index'>depth</span>: 50</li><li><span>ds_month</span>: 3</li><li><span class='xr-has-index'>latitude</span>: 132</li><li><span class='xr-has-index'>longitude</span>: 240</li></ul></div><div class='xr-section-details'></div></li><li class='xr-section-item'><input id='section-d8cf8e22-c1b5-4698-be49-c8d16a472ab0' class='xr-section-summary-in' type='checkbox'  checked><label for='section-d8cf8e22-c1b5-4698-be49-c8d16a472ab0' class='xr-section-summary' >Coordinates: <span>(4)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'><li class='xr-var-item'><div class='xr-var-name'><span class='xr-has-index'>longitude</span></div><div class='xr-var-dims'>(longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>10.0 10.08 10.17 ... 29.83 29.92</div><input id='attrs-11e0bae1-00d3-45c5-9261-cb7a495589d4' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-11e0bae1-00d3-45c5-9261-cb7a495589d4' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-c7f25e0a-88a3-4097-8718-85c339436e79' class='xr-var-data-in' type='checkbox'><label for='data-c7f25e0a-88a3-4097-8718-85c339436e79' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>valid_min :</span></dt><dd>-180.0</dd><dt><span>valid_max :</span></dt><dd>179.91667</dd><dt><span>step :</span></dt><dd>0.08332825</dd><dt><span>units :</span></dt><dd>degrees_east</dd><dt><span>unit_long :</span></dt><dd>Degrees East</dd><dt><span>long_name :</span></dt><dd>Longitude</dd><dt><span>standard_name :</span></dt><dd>longitude</dd><dt><span>axis :</span></dt><dd>X</dd></dl></div><div class='xr-var-data'><pre>array([10.      , 10.083333, 10.166667, ..., 29.75    , 29.833334, 29.916666],
-      dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span class='xr-has-index'>latitude</span></div><div class='xr-var-dims'>(latitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>54.0 54.08 54.17 ... 64.83 64.92</div><input id='attrs-18d05892-57e1-46ba-8b56-a654c6d9618c' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-18d05892-57e1-46ba-8b56-a654c6d9618c' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-d5712eb2-afee-4927-a02d-ce2779c16a81' class='xr-var-data-in' type='checkbox'><label for='data-d5712eb2-afee-4927-a02d-ce2779c16a81' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>valid_min :</span></dt><dd>-80.0</dd><dt><span>valid_max :</span></dt><dd>90.0</dd><dt><span>step :</span></dt><dd>0.08333588</dd><dt><span>units :</span></dt><dd>degrees_north</dd><dt><span>unit_long :</span></dt><dd>Degrees North</dd><dt><span>long_name :</span></dt><dd>Latitude</dd><dt><span>standard_name :</span></dt><dd>latitude</dd><dt><span>axis :</span></dt><dd>Y</dd></dl></div><div class='xr-var-data'><pre>array([54.      , 54.083332, 54.166668, 54.25    , 54.333332, 54.416668,
-       54.5     , 54.583332, 54.666668, 54.75    , 54.833332, 54.916668,
-       55.      , 55.083332, 55.166668, 55.25    , 55.333332, 55.416668,
-       55.5     , 55.583332, 55.666668, 55.75    , 55.833332, 55.916668,
-       56.      , 56.083332, 56.166668, 56.25    , 56.333332, 56.416668,
-       56.5     , 56.583332, 56.666668, 56.75    , 56.833332, 56.916668,
-       57.      , 57.083332, 57.166668, 57.25    , 57.333332, 57.416668,
-       57.5     , 57.583332, 57.666668, 57.75    , 57.833332, 57.916668,
-       58.      , 58.083332, 58.166668, 58.25    , 58.333332, 58.416668,
-       58.5     , 58.583332, 58.666668, 58.75    , 58.833332, 58.916668,
-       59.      , 59.083332, 59.166668, 59.25    , 59.333332, 59.416668,
-       59.5     , 59.583332, 59.666668, 59.75    , 59.833332, 59.916668,
-       60.      , 60.083332, 60.166668, 60.25    , 60.333332, 60.416668,
-       60.5     , 60.583332, 60.666668, 60.75    , 60.833332, 60.916668,
-       61.      , 61.083332, 61.166668, 61.25    , 61.333332, 61.416668,
-       61.5     , 61.583332, 61.666668, 61.75    , 61.833332, 61.916668,
-       62.      , 62.083332, 62.166668, 62.25    , 62.333332, 62.416668,
-       62.5     , 62.583332, 62.666668, 62.75    , 62.833332, 62.916668,
-       63.      , 63.083332, 63.166668, 63.25    , 63.333332, 63.416668,
-       63.5     , 63.583332, 63.666668, 63.75    , 63.833332, 63.916668,
-       64.      , 64.083336, 64.166664, 64.25    , 64.333336, 64.416664,
-       64.5     , 64.583336, 64.666664, 64.75    , 64.833336, 64.916664],
-      dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span class='xr-has-index'>depth</span></div><div class='xr-var-dims'>(depth)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>0.494 1.541 ... 5.275e+03 5.728e+03</div><input id='attrs-a01aeeb3-fcd3-41c9-b8a4-b7947608cd17' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-a01aeeb3-fcd3-41c9-b8a4-b7947608cd17' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-79540ac1-eb68-495e-90f3-f15400f737e5' class='xr-var-data-in' type='checkbox'><label for='data-79540ac1-eb68-495e-90f3-f15400f737e5' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>valid_min :</span></dt><dd>0.494025</dd><dt><span>valid_max :</span></dt><dd>5727.917</dd><dt><span>units :</span></dt><dd>m</dd><dt><span>positive :</span></dt><dd>down</dd><dt><span>unit_long :</span></dt><dd>Meters</dd><dt><span>long_name :</span></dt><dd>Depth</dd><dt><span>standard_name :</span></dt><dd>depth</dd><dt><span>axis :</span></dt><dd>Z</dd></dl></div><div class='xr-var-data'><pre>array([4.940250e-01, 1.541375e+00, 2.645669e+00, 3.819495e+00, 5.078224e+00,
-       6.440614e+00, 7.929560e+00, 9.572997e+00, 1.140500e+01, 1.346714e+01,
-       1.581007e+01, 1.849556e+01, 2.159882e+01, 2.521141e+01, 2.944473e+01,
-       3.443415e+01, 4.034405e+01, 4.737369e+01, 5.576429e+01, 6.580727e+01,
-       7.785385e+01, 9.232607e+01, 1.097293e+02, 1.306660e+02, 1.558507e+02,
-       1.861256e+02, 2.224752e+02, 2.660403e+02, 3.181274e+02, 3.802130e+02,
-       4.539377e+02, 5.410889e+02, 6.435668e+02, 7.633331e+02, 9.023393e+02,
-       1.062440e+03, 1.245291e+03, 1.452251e+03, 1.684284e+03, 1.941893e+03,
-       2.225078e+03, 2.533336e+03, 2.865703e+03, 3.220820e+03, 3.597032e+03,
-       3.992484e+03, 4.405224e+03, 4.833291e+03, 5.274784e+03, 5.727917e+03],
-      dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>time</span></div><div class='xr-var-dims'>(ds_month)</div><div class='xr-var-dtype'>datetime64[ns]</div><div class='xr-var-preview xr-preview'>2020-01-01T12:00:00 ... 2020-07-...</div><input id='attrs-558dddab-73c0-455d-ba8a-3e041af41edb' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-558dddab-73c0-455d-ba8a-3e041af41edb' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-21970ce3-e200-48b6-a82a-b1382bb09515' class='xr-var-data-in' type='checkbox'><label for='data-21970ce3-e200-48b6-a82a-b1382bb09515' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Time (hours since 1950-01-01)</dd><dt><span>standard_name :</span></dt><dd>time</dd><dt><span>valid_min :</span></dt><dd>613620.0</dd><dt><span>valid_max :</span></dt><dd>613620.0</dd><dt><span>axis :</span></dt><dd>T</dd></dl></div><div class='xr-var-data'><pre>array([&#x27;2020-01-01T12:00:00.000000000&#x27;, &#x27;2020-04-01T12:00:00.000000000&#x27;,
-       &#x27;2020-07-01T12:00:00.000000000&#x27;], dtype=&#x27;datetime64[ns]&#x27;)</pre></div></li></ul></div></li><li class='xr-section-item'><input id='section-0ce9c50f-1d2a-408c-ad7e-0ea84da09d55' class='xr-section-summary-in' type='checkbox'  checked><label for='section-0ce9c50f-1d2a-408c-ad7e-0ea84da09d55' class='xr-section-summary' >Data variables: <span>(11)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><ul class='xr-var-list'><li class='xr-var-item'><div class='xr-var-name'><span>mlotst</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-45437100-e19e-4eb5-a3ca-5b21d0f26e41' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-45437100-e19e-4eb5-a3ca-5b21d0f26e41' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-bf41ad36-cbbc-49fb-9c82-0da30efb2e03' class='xr-var-data-in' type='checkbox'><label for='data-bf41ad36-cbbc-49fb-9c82-0da30efb2e03' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Density ocean mixed layer thickness</dd><dt><span>standard_name :</span></dt><dd>ocean_mixed_layer_thickness_defined_by_sigma_theta</dd><dt><span>units :</span></dt><dd>m</dd><dt><span>unit_long :</span></dt><dd>Meters</dd><dt><span>valid_min :</span></dt><dd>1</dd><dt><span>valid_max :</span></dt><dd>7517</dd><dt><span>cell_methods :</span></dt><dd>area: mean</dd></dl></div><div class='xr-var-data'><pre>array([[[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [70.955536, 55.085915, 47.914062, ...,       nan,       nan,
-               nan],
-        [59.66369 , 50.66073 , 50.20295 , ...,       nan,       nan,
-               nan],
-        [58.595543, 63.020725, 53.559986, ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-...
-        [17.090366, 19.07407 , 24.109625, ...,       nan,       nan,
-               nan],
-        [18.768885, 20.447403, 28.07703 , ...,       nan,       nan,
-               nan],
-        [20.142218, 20.142218, 24.41481 , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [10.528886, 10.528886, 10.528886, ...,       nan,       nan,
-               nan],
-        [10.528886, 10.528886, 10.528886, ...,       nan,       nan,
-               nan],
-        [10.528886, 10.528886, 10.528886, ...,       nan,       nan,
-               nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>zos</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-f81d15eb-5ad6-46e3-a5b9-60e8ae2afd9e' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-f81d15eb-5ad6-46e3-a5b9-60e8ae2afd9e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-2d34d743-9f74-4563-9a81-39a40744ddb0' class='xr-var-data-in' type='checkbox'><label for='data-2d34d743-9f74-4563-9a81-39a40744ddb0' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Sea surface height</dd><dt><span>standard_name :</span></dt><dd>sea_surface_height_above_geoid</dd><dt><span>units :</span></dt><dd>m</dd><dt><span>unit_long :</span></dt><dd>Meters</dd><dt><span>valid_min :</span></dt><dd>-6293</dd><dt><span>valid_max :</span></dt><dd>5327</dd><dt><span>cell_methods :</span></dt><dd>area: mean</dd></dl></div><div class='xr-var-data'><pre>array([[[        nan,         nan,         nan, ...,         nan,
-                 nan,         nan],
-        [        nan,         nan,         nan, ...,         nan,
-                 nan,         nan],
-        [        nan,         nan,         nan, ...,         nan,
-                 nan,         nan],
-        ...,
-        [-0.32441175, -0.28138065, -0.23407696, ...,         nan,
-                 nan,         nan],
-        [-0.3238014 , -0.2722251 , -0.22888882, ...,         nan,
-                 nan,         nan],
-        [-0.3109836 , -0.27954954, -0.23255104, ...,         nan,
-                 nan,         nan]],
-
-       [[        nan,         nan,         nan, ...,         nan,
-                 nan,         nan],
-        [        nan,         nan,         nan, ...,         nan,
-                 nan,         nan],
-        [        nan,         nan,         nan, ...,         nan,
-                 nan,         nan],
-...
-        [-0.49501023, -0.47395244, -0.45258948, ...,         nan,
-                 nan,         nan],
-        [-0.4977569 , -0.46662802, -0.44526505, ...,         nan,
-                 nan,         nan],
-        [-0.50630206, -0.48158208, -0.4522843 , ...,         nan,
-                 nan,         nan]],
-
-       [[        nan,         nan,         nan, ...,         nan,
-                 nan,         nan],
-        [        nan,         nan,         nan, ...,         nan,
-                 nan,         nan],
-        [        nan,         nan,         nan, ...,         nan,
-                 nan,         nan],
-        ...,
-        [-0.516068  , -0.51454204, -0.5108799 , ...,         nan,
-                 nan,         nan],
-        [-0.51240575, -0.50904876, -0.50447094, ...,         nan,
-                 nan,         nan],
-        [-0.5087435 , -0.5059969 , -0.50111395, ...,         nan,
-                 nan,         nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>bottomT</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-a858cbfe-450e-4526-b5f8-db2d635351f2' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-a858cbfe-450e-4526-b5f8-db2d635351f2' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-1881215a-8e25-46ab-972a-6f5a533cf530' class='xr-var-data-in' type='checkbox'><label for='data-1881215a-8e25-46ab-972a-6f5a533cf530' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Sea floor potential temperature</dd><dt><span>standard_name :</span></dt><dd>sea_water_potential_temperature_at_sea_floor</dd><dt><span>units :</span></dt><dd>degrees_C</dd><dt><span>unit_long :</span></dt><dd>Degrees Celsius</dd><dt><span>valid_min :</span></dt><dd>-32697</dd><dt><span>valid_max :</span></dt><dd>18215</dd><dt><span>cell_methods :</span></dt><dd>area: mean</dd></dl></div><div class='xr-var-data'><pre>array([[[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [8.108249 , 8.212256 , 8.342631 , ...,       nan,       nan,
-               nan],
-        [8.188818 , 8.251808 , 8.325785 , ...,       nan,       nan,
-               nan],
-        [8.224708 , 8.307474 , 8.333842 , ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-...
-        [7.4029055, 7.426344 , 7.4951935, ...,       nan,       nan,
-               nan],
-        [7.4168215, 7.575762 , 7.7530136, ...,       nan,       nan,
-               nan],
-        [7.539872 , 7.705405 , 7.8189335, ...,       nan,       nan,
-               nan]],
-
-       [[      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        [      nan,       nan,       nan, ...,       nan,       nan,
-               nan],
-        ...,
-        [8.257668 , 8.31846  , 8.373394 , ...,       nan,       nan,
-               nan],
-        [8.325052 , 8.33311  , 8.35142  , ...,       nan,       nan,
-               nan],
-        [8.312601 , 8.32725  , 8.342631 , ...,       nan,       nan,
-               nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>sithick</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-45bce354-8825-4d5a-99fb-08322ebdec56' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-45bce354-8825-4d5a-99fb-08322ebdec56' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-852d0a67-6e12-49da-bd19-069bf4cbe7ba' class='xr-var-data-in' type='checkbox'><label for='data-852d0a67-6e12-49da-bd19-069bf4cbe7ba' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Sea ice thickness</dd><dt><span>standard_name :</span></dt><dd>sea_ice_thickness</dd><dt><span>units :</span></dt><dd>m</dd><dt><span>unit_long :</span></dt><dd>Meters</dd><dt><span>valid_min :</span></dt><dd>1</dd><dt><span>valid_max :</span></dt><dd>5701</dd><dt><span>cell_methods :</span></dt><dd>area: mean where sea_ice</dd></dl></div><div class='xr-var-data'><pre>array([[[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]],
-
-       [[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]],
-
-       [[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>siconc</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-851df0ce-683a-401b-9a23-c349fef6832f' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-851df0ce-683a-401b-9a23-c349fef6832f' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-66b5ad7b-170b-4a9a-bfa8-aa69fc1cab5d' class='xr-var-data-in' type='checkbox'><label for='data-66b5ad7b-170b-4a9a-bfa8-aa69fc1cab5d' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Ice concentration</dd><dt><span>standard_name :</span></dt><dd>sea_ice_area_fraction</dd><dt><span>units :</span></dt><dd>1</dd><dt><span>unit_long :</span></dt><dd>Fraction</dd><dt><span>valid_min :</span></dt><dd>1</dd><dt><span>valid_max :</span></dt><dd>27775</dd><dt><span>cell_methods :</span></dt><dd>area: mean where sea_ice</dd></dl></div><div class='xr-var-data'><pre>array([[[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]],
-
-       [[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]],
-
-       [[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>usi</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-8c7cdde0-356b-4562-ad10-8f952d7c0b13' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-8c7cdde0-356b-4562-ad10-8f952d7c0b13' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-13fd6bd7-1f69-4eaf-94aa-e0750dd73a38' class='xr-var-data-in' type='checkbox'><label for='data-13fd6bd7-1f69-4eaf-94aa-e0750dd73a38' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Sea ice eastward velocity</dd><dt><span>standard_name :</span></dt><dd>eastward_sea_ice_velocity</dd><dt><span>units :</span></dt><dd>m s-1</dd><dt><span>unit_long :</span></dt><dd>Meters per second</dd><dt><span>valid_min :</span></dt><dd>-29827</dd><dt><span>valid_max :</span></dt><dd>32664</dd><dt><span>cell_methods :</span></dt><dd>area: mean where sea_ice</dd></dl></div><div class='xr-var-data'><pre>array([[[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]],
-
-       [[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]],
-
-       [[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>vsi</span></div><div class='xr-var-dims'>(ds_month, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-8d1c726e-708d-4011-b7c7-01d996692196' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-8d1c726e-708d-4011-b7c7-01d996692196' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-aee2c730-aea9-4ec5-be4d-68251c76a458' class='xr-var-data-in' type='checkbox'><label for='data-aee2c730-aea9-4ec5-be4d-68251c76a458' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Sea ice northward velocity</dd><dt><span>standard_name :</span></dt><dd>northward_sea_ice_velocity</dd><dt><span>units :</span></dt><dd>m s-1</dd><dt><span>unit_long :</span></dt><dd>Meters per second</dd><dt><span>valid_min :</span></dt><dd>-32763</dd><dt><span>valid_max :</span></dt><dd>27001</dd><dt><span>cell_methods :</span></dt><dd>area: mean where sea_ice</dd></dl></div><div class='xr-var-data'><pre>array([[[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]],
-
-       [[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]],
-
-       [[nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        ...,
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan],
-        [nan, nan, nan, ..., nan, nan, nan]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>thetao</span></div><div class='xr-var-dims'>(ds_month, depth, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-99601cbd-a9de-4223-a091-4bd2ea84d4e8' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-99601cbd-a9de-4223-a091-4bd2ea84d4e8' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-32ffd206-4bd5-489d-bcec-e50b72f372cb' class='xr-var-data-in' type='checkbox'><label for='data-32ffd206-4bd5-489d-bcec-e50b72f372cb' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Temperature</dd><dt><span>standard_name :</span></dt><dd>sea_water_potential_temperature</dd><dt><span>units :</span></dt><dd>degrees_C</dd><dt><span>unit_long :</span></dt><dd>Degrees Celsius</dd><dt><span>valid_min :</span></dt><dd>-32689</dd><dt><span>valid_max :</span></dt><dd>18195</dd><dt><span>cell_methods :</span></dt><dd>area: mean</dd></dl></div><div class='xr-var-data'><pre>array([[[[       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         ...,
-         [ 7.9317303,  8.091403 ,  8.149999 , ...,        nan,
-                 nan,        nan],
-         [ 7.8811913,  8.0936   ,  8.082614 , ...,        nan,
-                 nan,        nan],
-         [ 7.9060946,  7.9961853,  8.117039 , ...,        nan,
-                 nan,        nan]],
-
-        [[       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-...
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan]],
-
-        [[       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         ...,
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan],
-         [       nan,        nan,        nan, ...,        nan,
-                 nan,        nan]]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>so</span></div><div class='xr-var-dims'>(ds_month, depth, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-cdd4ba68-d116-4452-b217-42286e18f38e' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-cdd4ba68-d116-4452-b217-42286e18f38e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-b5a00155-e87a-4b8e-a91a-a7a3a75b8849' class='xr-var-data-in' type='checkbox'><label for='data-b5a00155-e87a-4b8e-a91a-a7a3a75b8849' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Salinity</dd><dt><span>standard_name :</span></dt><dd>sea_water_salinity</dd><dt><span>units :</span></dt><dd>1e-3</dd><dt><span>unit_long :</span></dt><dd>Practical Salinity Unit</dd><dt><span>valid_min :</span></dt><dd>2</dd><dt><span>valid_max :</span></dt><dd>28643</dd><dt><span>cell_methods :</span></dt><dd>area: mean</dd></dl></div><div class='xr-var-data'><pre>array([[[[      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         ...,
-         [34.756004, 34.54695 , 34.30738 , ...,       nan,       nan,
-                nan],
-         [34.725487, 34.46608 , 34.257027, ...,       nan,       nan,
-                nan],
-         [34.646137, 34.557632, 34.325695, ...,       nan,       nan,
-                nan]],
-
-        [[      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-...
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan]],
-
-        [[      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         ...,
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan],
-         [      nan,       nan,       nan, ...,       nan,       nan,
-                nan]]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>uo</span></div><div class='xr-var-dims'>(ds_month, depth, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-d6351807-17ab-4229-949f-d32276426c9e' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-d6351807-17ab-4229-949f-d32276426c9e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-5086e000-c675-4659-a108-0ced4daf6b36' class='xr-var-data-in' type='checkbox'><label for='data-5086e000-c675-4659-a108-0ced4daf6b36' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Eastward velocity</dd><dt><span>standard_name :</span></dt><dd>eastward_sea_water_velocity</dd><dt><span>units :</span></dt><dd>m s-1</dd><dt><span>unit_long :</span></dt><dd>Meters per second</dd><dt><span>valid_min :</span></dt><dd>-2810</dd><dt><span>valid_max :</span></dt><dd>3613</dd><dt><span>cell_methods :</span></dt><dd>area: mean</dd></dl></div><div class='xr-var-data'><pre>array([[[[        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         ...,
-         [ 0.00671407, -0.08056886, -0.06714072, ...,         nan,
-                  nan,         nan],
-         [ 0.03845332,  0.08117923,  0.11963256, ...,         nan,
-                  nan,         nan],
-         [ 0.05493332,  0.12573627,  0.21057771, ...,         nan,
-                  nan,         nan]],
-
-        [[        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-...
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan]],
-
-        [[        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         ...,
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan],
-         [        nan,         nan,         nan, ...,         nan,
-                  nan,         nan]]]], dtype=float32)</pre></div></li><li class='xr-var-item'><div class='xr-var-name'><span>vo</span></div><div class='xr-var-dims'>(ds_month, depth, latitude, longitude)</div><div class='xr-var-dtype'>float32</div><div class='xr-var-preview xr-preview'>nan nan nan nan ... nan nan nan nan</div><input id='attrs-65014987-bb7c-4bf9-ac41-bde974de0539' class='xr-var-attrs-in' type='checkbox' ><label for='attrs-65014987-bb7c-4bf9-ac41-bde974de0539' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-3459f9d6-8199-44db-ab38-360baa14f0f2' class='xr-var-data-in' type='checkbox'><label for='data-3459f9d6-8199-44db-ab38-360baa14f0f2' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label><div class='xr-var-attrs'><dl class='xr-attrs'><dt><span>long_name :</span></dt><dd>Northward velocity</dd><dt><span>standard_name :</span></dt><dd>northward_sea_water_velocity</dd><dt><span>units :</span></dt><dd>m s-1</dd><dt><span>unit_long :</span></dt><dd>Meters per second</dd><dt><span>valid_min :</span></dt><dd>-3441</dd><dt><span>valid_max :</span></dt><dd>3105</dd><dt><span>cell_methods :</span></dt><dd>area: mean</dd></dl></div><div class='xr-var-data'><pre>array([[[[           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-         [           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-         [           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-         ...,
-         [ 5.9999388e-01,  7.6906645e-01,  8.4536272e-01, ...,
-                     nan,            nan,            nan],
-         [ 6.1952573e-01,  8.2033753e-01,  8.6123234e-01, ...,
-                     nan,            nan,            nan],
-         [ 4.5899838e-01,  6.1830503e-01,  7.1535385e-01, ...,
-                     nan,            nan,            nan]],
-
-        [[           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-         [           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-         [           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-...
-                     nan,            nan,            nan],
-         [           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-         [           nan,            nan,            nan, ...,
-                     nan,            nan,            nan]],
-
-        [[           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-         [           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-         [           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-         ...,
-         [           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-         [           nan,            nan,            nan, ...,
-                     nan,            nan,            nan],
-         [           nan,            nan,            nan, ...,
-                     nan,            nan,            nan]]]],
-      dtype=float32)</pre></div></li></ul></div></li><li class='xr-section-item'><input id='section-0cb8d2e7-ff15-44ff-9403-148a29d6d8fe' class='xr-section-summary-in' type='checkbox'  ><label for='section-0cb8d2e7-ff15-44ff-9403-148a29d6d8fe' class='xr-section-summary' >Attributes: <span>(24)</span></label><div class='xr-section-inline-details'></div><div class='xr-section-details'><dl class='xr-attrs'><dt><span>title :</span></dt><dd>daily mean fields from Global Ocean Physics Analysis and Forecast updated Daily</dd><dt><span>easting :</span></dt><dd>longitude</dd><dt><span>northing :</span></dt><dd>latitude</dd><dt><span>history :</span></dt><dd>2020/01/12 21:22:06 MERCATOR OCEAN Netcdf creation</dd><dt><span>source :</span></dt><dd>MERCATOR PSY4V3R1</dd><dt><span>institution :</span></dt><dd>MERCATOR OCEAN</dd><dt><span>references :</span></dt><dd>http://www.mercator-ocean.fr</dd><dt><span>comment :</span></dt><dd>CMEMS product</dd><dt><span>Conventions :</span></dt><dd>CF-1.4</dd><dt><span>domain_name :</span></dt><dd>GL12</dd><dt><span>field_type :</span></dt><dd>mean</dd><dt><span>field_date :</span></dt><dd>2020-01-01 00:00:00</dd><dt><span>field_julian_date :</span></dt><dd>25567.0</dd><dt><span>julian_day_unit :</span></dt><dd>days since 1950-01-01 00:00:00</dd><dt><span>forecast_range :</span></dt><dd>0-day_forecast</dd><dt><span>forecast_type :</span></dt><dd>hindcast</dd><dt><span>bulletin_date :</span></dt><dd>2020-01-15 00:00:00</dd><dt><span>bulletin_type :</span></dt><dd>operational</dd><dt><span>longitude_min :</span></dt><dd>-180.0</dd><dt><span>longitude_max :</span></dt><dd>179.91667</dd><dt><span>latitude_min :</span></dt><dd>-80.0</dd><dt><span>latitude_max :</span></dt><dd>90.0</dd><dt><span>z_min :</span></dt><dd>0.494025</dd><dt><span>z_max :</span></dt><dd>5727.917</dd></dl></div></li></ul></div></div>
-
-
-
-
-```python
-# Remove ships considering region
-ais_data = ais_data[(ais_data['LON'] > bbox[0][0]) & (ais_data['LON'] < bbox[1][0])].dropna()
-ais_data = ais_data[(ais_data['LAT'] > bbox[0][1]) & (ais_data['LAT'] < bbox[1][1])].dropna()
-
-# Remove ships with status =! 0 and status =! 8
-ais_data = ais_data[(ais_data['Status'] == 0) | (ais_data['Status'] == 8)].dropna()
-
-# Remove ships with SOG < 5 or SOG > 102.2
-ais_data = ais_data[(ais_data['SOG'] > 5) & (ais_data['SOG'] < 102.2)].dropna()
-
-# Remove ships with heading > 361
-ais_data = ais_data[(ais_data['Heading'] < 361)].dropna()
-
-# Calculate tonnage (Length * Breadth * Depth * S) - WE DON'T HAVE THE DEPTH
-# According to https://cdn.shopify.com/s/files/1/1021/8837/files/Tonnage_Guide_1_-_Simplified_Measurement.pdf?1513
-ais_data['GrossTonnage'] = 0.67 * ais_data['Length'] * ais_data['Width']
-
-ais_data = ais_data.reset_index(drop=True)
-
-ais_data
+# Get data for one time
+ds_wav = ds_wav_all
+ds_phy = ds_phy_all
+lat = round(study_data['LAT'].iloc[0])
+lon = round(study_data['LON'].iloc[0])
+time = str(study_data['EstimatedTime'].iloc[0])
+
+VHM0 = ds_wav.VHM0.sel(time = time, longitude = lon, latitude = lat, method = 'nearest')
+VMDR = ds_wav.VMDR.sel(time = time, longitude = lon, latitude = lat, method = 'nearest')
+thetao = ds_phy.thetao.sel(time = time, longitude = lon, latitude = lat, depth = 0, method = 'nearest')
+salin = ds_phy.so.sel(time = time, longitude = lon, latitude = lat, depth = 0, method = 'nearest')
 ```
 
 
 ```python
 # Merge AIS and CMEMS data
-
-study_data = ais_data
+study_data = study_data.dropna()
 
 study_data['VHM0'] = 0.0
 study_data['VMDR'] = 0.0
 study_data['Temperature'] = 0.0
 study_data['Salinity'] = 0.0
 
-def extract_to_ais():
+def extract_model():
+  
   for index, row in study_data.iterrows():
 
       lat = round(row['LAT'], 1)
       lon = round(row['LON'], 1)
-      time = str(row['BaseDateTime'])
+      time = str(row['EstimatedTime'])
 
       VHM0 = ds_wav.VHM0.sel(time = time, longitude = lon, latitude = lat, method = 'nearest')
       VMDR = ds_wav.VMDR.sel(time = time, longitude = lon, latitude = lat, method = 'nearest')
-      
-      thetao = ds_phy.thetao.sel(longitude = lon, latitude = lat, method = 'nearest').isel(depth = 0)
-      salin = ds_phy.so.sel(longitude = lon, latitude = lat, method = 'nearest').isel(depth = 0)
+      thetao = ds_phy.thetao.sel(time = time, longitude = lon, latitude = lat, depth = 0, method = 'nearest')
+      salin = ds_phy.so.sel(time = time, longitude = lon, latitude = lat, depth = 0, method = 'nearest')
 
       study_data.at[index, 'VHM0'] = VHM0
       study_data.at[index, 'VMDR'] = VMDR
       study_data.at[index, 'Temperature'] = thetao
       study_data.at[index, 'Salinity'] = salin
       
-extract_to_ais()
+extract_model()
 
+study_data = study_data.dropna()
 study_data
 ```
 
-#Notes from meetings
+
+```python
+# Save merge data (not fully processed)
+study_data.to_csv('data/study_data_np.csv')
+```
+
+
+```python
+study_data = pd.read_csv('data/study_data_np.csv')
+```
+
+
+```python
+import matplotlib.pyplot as plt
+
+# Normalize SOG
+study_data['SOG_norm'] = (study_data['SOG'] - study_data['SOG'].mean(axis = 0)) / study_data['SOG'].std(axis = 0)
+
+# Make histogram of normalized SOG
+study_data['SOG_norm'].plot(kind = 'hist', alpha = 0.7, bins = 30, title = 'Histogram of normalized SOG', 
+                            grid = True, figsize = (10,5), fontsize = 14, color = ['#C40000'])
+plt.xlabel('Normalized SOG', fontsize = 16)
+plt.ylabel("Frequency", fontsize = 16)
+plt.show()
+
+# Remove SOG outliers
+study_data = study_data[(study_data['SOG_norm'] < 4)].dropna()
+
+# Standardize to 0 to 1
+study_data['SOG_norm'] = ((study_data['SOG_norm'] - study_data['SOG_norm'].min(axis=0)) / 
+                           (study_data['SOG_norm'].max(axis = 0) - study_data['SOG_norm'].min(axis=0)))
+```
+
+
+![png](imgs/output_27_0.png)
+
+
+
+```python
+# Normalize COG
+study_data['COG_norm'] = (study_data['COG'] - study_data['COG'].mean(axis = 0)) / study_data['COG'].std(axis = 0)
+
+# Make histogram of normalized COG
+study_data['COG_norm'].plot(kind = 'hist', alpha = 0.7, bins = 30, title = 'Histogram of normalized COG', 
+                            grid = True, figsize = (10,5), fontsize = 14, color = ['#C40000'])
+plt.xlabel('Normalized COG', fontsize = 16)
+plt.ylabel("Frequency", fontsize = 16)
+plt.show()
+
+# Standardize to 0 to 1
+study_data['COG_norm'] = ((study_data['COG_norm'] - study_data['COG_norm'].min(axis=0)) / 
+                           (study_data['COG_norm'].max(axis = 0) - study_data['COG_norm'].min(axis=0)))
+```
+
+
+![png](imgs/output_28_1.png)
+
+
+
+```python
+# Normalize Gross Tonnage
+study_data['GrossTonnage_norm'] = (study_data['GrossTonnage'] - study_data['GrossTonnage'].mean(axis = 0)) / study_data['GrossTonnage'].std(axis = 0)
+
+# Make histogram of normalized Gross Tonnage
+study_data['GrossTonnage_norm'].plot(kind = 'hist', alpha = 0.7, bins = 30, title = 'Histogram of normalized Gross Tonnage', 
+                            grid = True, figsize = (10,5), fontsize = 14, color = ['#C40000'])
+plt.xlabel('Normalized Gross Tonnage', fontsize = 16)
+plt.ylabel("Frequency", fontsize = 16)
+plt.show()
+
+# Standardize to 0 to 1
+study_data['GrossTonnage_norm'] = ((study_data['GrossTonnage_norm'] - study_data['GrossTonnage_norm'].min(axis=0)) / 
+                                    (study_data['GrossTonnage_norm'].max(axis = 0) - study_data['GrossTonnage_norm'].min(axis=0)))
+```
+
+
+![png](imgs/output_29_0.png)
+
+
+
+```python
+# Normalize VHM0
+study_data['VHM0_norm'] = (study_data['VHM0'] - study_data['VHM0'].mean(axis = 0)) / study_data['VHM0'].std(axis = 0)
+
+# Make histogram of normalized VHM0
+study_data['VHM0_norm'].plot(kind = 'hist', alpha = 0.7, bins = 30, title = 'Histogram of normalized VHM0', 
+                            grid = True, figsize = (10,5), fontsize = 14, color = ['#C40000'])
+plt.xlabel('Normalized VHM0', fontsize = 16)
+plt.ylabel("Frequency", fontsize = 16)
+plt.show()
+
+# Remove VHM0 outliers
+study_data = study_data[(study_data['VHM0_norm'] > -2)].dropna()
+
+# Standardize to 0 to 1
+study_data['VHM0_norm'] = ((study_data['VHM0_norm'] - study_data['VHM0_norm'].min(axis=0)) / 
+                            (study_data['VHM0_norm'].max(axis = 0) - study_data['VHM0_norm'].min(axis=0)))
+```
+
+
+![png](imgs/output_30_0.png)
+
+
+
+```python
+# Normalize VMDR
+study_data['VMDR_norm'] = (study_data['VMDR'] - study_data['VMDR'].mean(axis = 0)) / study_data['VMDR'].std(axis = 0)
+
+# Make histogram of normalized VMDR
+study_data['VMDR_norm'].plot(kind = 'hist', alpha = 0.7, bins = 30, title = 'Histogram of normalized VMDR', 
+                            grid = True, figsize = (10,5), fontsize = 14, color = ['#C40000'])
+plt.xlabel('Normalized VMDR', fontsize = 16)
+plt.ylabel("Frequency", fontsize = 16)
+plt.show()
+
+# Standardize to 0 to 1
+study_data['VMDR_norm'] = ((study_data['VMDR_norm'] - study_data['VMDR_norm'].min(axis=0)) / 
+                            (study_data['VMDR_norm'].max(axis = 0) - study_data['VMDR_norm'].min(axis=0)))
+```
+
+
+![png](imgs/output_31_0.png)
+
+
+
+```python
+# Normalize Temperature
+study_data['Temperature_norm'] = (study_data['Temperature'] - study_data['Temperature'].mean(axis = 0)) / study_data['Temperature'].std(axis = 0)
+
+# Make histogram of normalized Temperature
+study_data['Temperature_norm'].plot(kind = 'hist', alpha = 0.7, bins = 30, title = 'Histogram of normalized Temperature', 
+                            grid = True, figsize = (10,5), fontsize = 14, color = ['#C40000'])
+plt.xlabel('Normalized Temperature', fontsize = 16)
+plt.ylabel("Frequency", fontsize = 16)
+plt.show()
+
+# Standardize to 0 to 1
+study_data['Temperature_norm'] = ((study_data['Temperature_norm'] - study_data['Temperature_norm'].min(axis=0)) / 
+                                   (study_data['Temperature_norm'].max(axis = 0) - study_data['Temperature_norm'].min(axis=0)))
+```
+
+
+![png](imgs/output_32_0.png)
+
+
+
+```python
+# Normalize Salinity
+study_data['Salinity_norm'] = (study_data['Salinity'] - study_data['Salinity'].mean(axis = 0)) / study_data['Salinity'].std(axis = 0)
+
+# Make histogram of normalized Salinity
+study_data['Salinity_norm'].plot(kind = 'hist', alpha = 0.7, bins = 30, title = 'Histogram of normalized Salinity', 
+                            grid = True, figsize = (10,5), fontsize = 14, color = ['#C40000'])
+plt.xlabel('Normalized Salinity', fontsize = 16)
+plt.ylabel("Frequency", fontsize = 16)
+plt.show()
+
+# Standardize to 0 to 1
+study_data['Salinity_norm'] = ((study_data['Salinity_norm'] - study_data['Salinity_norm'].min(axis=0)) / 
+                               (study_data['Salinity_norm'].max(axis=0) - study_data['Salinity_norm'].min(axis=0)))
+```
+
+
+![png](imgs/output_33_0.png)
+
+
+
+```python
+print("After preprocessing...")
+final_data = study_data.filter(['EstimatedTime', 'LAT', 'LON', 'Heading', 'SOG_norm', 'COG_norm', 'GrossTonnage_norm', 'VHM0_norm', 'VMDR_norm', 'Temperature_norm', 'Salinity_norm'])
+final_data = final_data.dropna()
+final_data.to_csv('data/preprocessed_data.csv')
+final_data
+```
+
+    After preprocessing...
+    
+
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>EstimatedTime</th>
+      <th>LAT</th>
+      <th>LON</th>
+      <th>Heading</th>
+      <th>SOG_norm</th>
+      <th>COG_norm</th>
+      <th>GrossTonnage_norm</th>
+      <th>VHM0_norm</th>
+      <th>VMDR_norm</th>
+      <th>Temperature_norm</th>
+      <th>Salinity_norm</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>2020-01-01 00:00:00</td>
+      <td>36.80096</td>
+      <td>-75.22302</td>
+      <td>283.0</td>
+      <td>0.309783</td>
+      <td>0.185836</td>
+      <td>0.360360</td>
+      <td>0.216849</td>
+      <td>0.278556</td>
+      <td>0.375870</td>
+      <td>0.887591</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>2020-01-01 00:00:00</td>
+      <td>26.08420</td>
+      <td>-79.48273</td>
+      <td>187.0</td>
+      <td>0.331522</td>
+      <td>0.961661</td>
+      <td>0.515015</td>
+      <td>0.088924</td>
+      <td>0.052832</td>
+      <td>0.835220</td>
+      <td>0.982673</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>2020-01-01 00:00:00</td>
+      <td>29.34368</td>
+      <td>-94.74366</td>
+      <td>86.0</td>
+      <td>0.168478</td>
+      <td>0.709402</td>
+      <td>0.293093</td>
+      <td>0.018721</td>
+      <td>0.323412</td>
+      <td>0.490509</td>
+      <td>0.792078</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>2020-01-01 00:00:00</td>
+      <td>37.76973</td>
+      <td>-122.35415</td>
+      <td>326.0</td>
+      <td>0.190217</td>
+      <td>0.286447</td>
+      <td>0.293093</td>
+      <td>0.084243</td>
+      <td>0.745706</td>
+      <td>0.377345</td>
+      <td>0.641309</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>2020-01-01 00:00:00</td>
+      <td>26.89363</td>
+      <td>-79.20262</td>
+      <td>155.0</td>
+      <td>0.684783</td>
+      <td>0.878388</td>
+      <td>0.451652</td>
+      <td>0.092044</td>
+      <td>0.022122</td>
+      <td>0.808156</td>
+      <td>0.987242</td>
+    </tr>
+    <tr>
+      <th>...</th>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+    </tr>
+    <tr>
+      <th>720152</th>
+      <td>2020-10-02 00:00:00</td>
+      <td>26.05327</td>
+      <td>-79.84955</td>
+      <td>5.0</td>
+      <td>0.684783</td>
+      <td>0.510379</td>
+      <td>0.371572</td>
+      <td>0.107644</td>
+      <td>0.056417</td>
+      <td>0.944354</td>
+      <td>0.973406</td>
+    </tr>
+    <tr>
+      <th>720153</th>
+      <td>2020-10-02 00:00:00</td>
+      <td>28.44555</td>
+      <td>-95.59912</td>
+      <td>57.0</td>
+      <td>0.315217</td>
+      <td>0.636874</td>
+      <td>0.479279</td>
+      <td>0.037441</td>
+      <td>0.305431</td>
+      <td>0.861402</td>
+      <td>0.840567</td>
+    </tr>
+    <tr>
+      <th>720154</th>
+      <td>2020-10-02 00:00:00</td>
+      <td>39.18945</td>
+      <td>-130.91286</td>
+      <td>280.0</td>
+      <td>0.695652</td>
+      <td>0.183639</td>
+      <td>0.706306</td>
+      <td>0.404056</td>
+      <td>0.767189</td>
+      <td>0.674095</td>
+      <td>0.874057</td>
+    </tr>
+    <tr>
+      <th>720155</th>
+      <td>2020-10-02 00:00:00</td>
+      <td>17.18697</td>
+      <td>-67.33857</td>
+      <td>110.0</td>
+      <td>0.250000</td>
+      <td>0.768742</td>
+      <td>0.302703</td>
+      <td>0.371295</td>
+      <td>0.258602</td>
+      <td>0.934577</td>
+      <td>0.935218</td>
+    </tr>
+    <tr>
+      <th>720156</th>
+      <td>2020-10-02 00:00:00</td>
+      <td>37.51332</td>
+      <td>-68.00148</td>
+      <td>62.0</td>
+      <td>0.206522</td>
+      <td>0.689133</td>
+      <td>0.650901</td>
+      <td>0.254290</td>
+      <td>0.508504</td>
+      <td>0.847595</td>
+      <td>0.972975</td>
+    </tr>
+  </tbody>
+</table>
+<p>566846 rows × 11 columns</p>
+</div>
+
+
+
+## Notes from meetings
 
 **02 - 06 - 2021**
 
 Space time cubes
 - 52N: sfTracks space time cube
 
-simple solution:
-- least cost path as in simple_routing.ipynb
-
-- start simple
+Simple solution:
+- Start simple
+- Least cost path as in simple_routing.ipynb
 
 **09 - 06 - 2021**
 
-easy retrieval for cmems data: harvester.maridata EnvDataAPI github
+Easy retrieval for cmems data: harvester.maridata EnvDataAPI github
 
-regarding modelling:
-- filter for ship types
-- select a few specific ship
-- 2000 records is too small
-- have specific lengths and widths of ships
-- Exclude Speed over ground below 7 knots
-- standardization & normalization is recommended
+Regarding modelling:
+- Filter by ship types
+- 2000 records are too low
+- Have specific lengths and widths of ships
+- Exclude SOG below 7 knots
+- Standardization & normalization are recommended
 
-regarding routing:
-- Example Group C: Genetic algorithm
-- multi-objective optimization: pymoo - NSGA-II
+Regarding routing:
+- Genetic algorithm (Group C)
+- Multi-objective optimization: pymoo - NSGA-II
+
+# Model building
+
+
+```python
+# Imports 
+
+import requests
+import zipfile
+import os
+import pandas as pd
+import ftplib
+import os
+import xarray as xr
+import numpy as np
+import matplotlib.pyplot as plt
+```
+
+
+```python
+# load the merged and preprocessed data
+data = pd.read_csv('data/preprocessed_data.csv')
+```
+
+## Simple model: linear regression
+
+
+```python
+from sklearn import linear_model
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor
+```
+
+
+```python
+# target 
+y = data.SOG_norm
+
+# predictors
+features = ['VHM0_norm','VMDR_norm','Temperature_norm','Salinity_norm'] 
+X = data[features]
+
+# split data to train and validation
+train_X, val_X, train_y, val_y = train_test_split(X, y,random_state = 0)
+```
+
+
+```python
+# Create linear regression object
+regr = linear_model.LinearRegression()
+
+# Train the model using the training sets
+regr.fit(train_X, train_y)
+
+# Make predictions using the testing set
+pred_y = regr.predict(val_X)
+
+# The coefficients
+print('Coefficients: \n', regr.coef_)
+# The mean squared error
+print('Mean squared error: %.2f'
+      % mean_squared_error(val_y, pred_y))
+# R2: 1 is perfect prediction
+print('R^2: %.2f'
+      % r2_score(val_y, pred_y))
+```
+
+    Coefficients: 
+     [0.14661334 0.04047778 0.13590311 0.08404383]
+    Mean squared error: 0.03
+    R^2: 0.04
+    
+
+## Intermediate model: Random forest
+
+
+```python
+from joblib import dump, load
+from pathlib import Path
+
+my_file = Path("data/rf_model.joblib")
+if my_file.is_file():
+    forest_model = load('data/rf_model.joblib') 
+else:
+    forest_model = RandomForestRegressor(random_state=1)
+    forest_model.fit(train_X, train_y)
+    pred_y = forest_model.predict(val_X)
+    # The mean squared error
+    print('Mean squared error: %.2f'
+          % mean_squared_error(val_y, pred_y))
+    # R2: 1 is perfect prediction
+    print('R^2: %.2f'
+          % r2_score(val_y, pred_y))
+    dump(forest_model, 'data/rf_model.joblib') 
+
+#Add variable importance
+feature_importance_values = forest_model.feature_importances_
+feature_importances = pd.DataFrame({'feature': features, 'importance': feature_importance_values})
+```
+
+
+```python
+def plot_feature_importances(df):
+    """Plot importances returned by a model. This can work with any measure of
+    feature importance provided that higher importance is better. 
+    
+    Args:
+        df (dataframe): feature importances. Must have the features in a column
+        called `features` and the importances in a column called 'importance'
+    Returns:
+        shows a plot of the 15 most importance features
+        
+        df (dataframe): feature importances sorted by importance (highest to lowest) 
+        with a column for normalized importance
+        """
+    
+    # Sort features according to importance
+    df = df.sort_values('importance', ascending = False).reset_index()
+    
+    # Normalize the feature importances to add up to one
+    df['importance_normalized'] = df['importance'] / df['importance'].sum()
+
+    # Make a horizontal bar chart of feature importances
+    plt.figure(figsize = (10, 6))
+    ax = plt.subplot()
+    
+    # Need to reverse the index to plot most important on top
+    ax.barh(list(reversed(list(df.index[:15]))), 
+            df['importance_normalized'].head(15), 
+            align = 'center', edgecolor = 'k')
+    
+    # Set the yticks and labels
+    ax.set_yticks(list(reversed(list(df.index[:15]))))
+    ax.set_yticklabels(df['feature'].head(15))
+    
+    # Plot labeling
+    plt.xlabel('Normalized Importance'); plt.title('Feature Importances')
+    plt.show()
+    
+    return df
+
+# Show the feature importances for the default features
+feature_importances_sorted = plot_feature_importances(feature_importances)
+```
+
+
+![png](imgs/output_9_0.png)
+
+
+# Routing
+
+
+```python
+# Join all wave products by using open_mfdataset, chunking data in response to memory issues
+wav_all = xr.open_mfdataset('data/routing/mf*.nc')
+```
+
+
+```python
+phy_all = xr.open_mfdataset('data/routing/me*.nc')
+```
+
+### Area of interest
+
+Calculate the optimal shipping route between Lisbon and Rio de Janeiro avoiding high waves.
+
+Lisbon: 38.716666° N 9.1667° W
+
+Rio de Janeiro: 22.908333° S 43.196389° W
+
+
+```python
+# Get array index to the value that is closest to a given value
+def get_closest(array, value):
+    return np.abs(array - value).argmin()
+```
+
+
+```python
+# Set bounding box for the allowed routing corridor
+bbox = ((-45, -25),(-7, 41))
+# Select time
+time_slice_wav = 3
+time_slice_phy = 0
+```
+
+
+```python
+# Get indices of the bbox
+lon_min = get_closest(wav_all.longitude.data, bbox[0][0])
+lat_min = get_closest(wav_all.latitude.data, bbox[0][1])
+lon_max = get_closest(wav_all.longitude.data, bbox[1][0])
+lat_max = get_closest(wav_all.latitude.data, bbox[1][1])
+```
+
+## Define the weights
+
+## Very simple solution: Calculate optimal route (minimum cost path) based on one variable _wave height_ for _one_ day
+
+
+```python
+# Extract array from dataset to define the cost in the routing algorithm 
+# Wave height
+wave_height = wav_all.VHM0.isel(time=time_slice_wav, longitude=slice(lon_min, lon_max), latitude=slice(lat_min, lat_max))
+
+# Wave direction
+wave_dir = wav_all.VMDR.isel(time=time_slice_wav, longitude=slice(lon_min, lon_max), latitude=slice(lat_min, lat_max))
+
+# Temperature
+temp = phy_all.thetao.isel(time=time_slice_phy, longitude=slice(lon_min, lon_max), latitude=slice(lat_min, lat_max), depth = 0)
+
+# Salinity
+sal = phy_all.so.isel(time=time_slice_phy, longitude=slice(lon_min, lon_max), latitude=slice(lat_min, lat_max), depth = 0)
+```
+
+### Start and end point of the route
+
+
+```python
+lat_Lis = 38.716666
+lon_Lis = -9.1667
+lat_Rio = -22.908333
+lon_Rio = -43.196389
+```
+
+
+```python
+start_lon = get_closest(wave_height.longitude.data, lon_Lis)
+start_lat = get_closest(wave_height.latitude.data, lat_Lis)
+end_lon = get_closest(wave_height.longitude.data,lon_Rio)
+end_lat = get_closest(wave_height.latitude.data,lat_Rio)
+```
+
+
+```python
+start = (start_lat, start_lon)
+end = (end_lat, end_lon)
+```
+
+
+```python
+land_mask = wave_height.data
+```
+
+
+```python
+# mask for land areas
+land_mask[np.isnan(land_mask)] = 1
+```
+
+
+```python
+start[1]
+```
+
+
+
+
+    430
+
+
+
+
+```python
+# Plot optimal route
+plt.figure(figsize=(10,10))
+
+# Costs
+plt.imshow(land_mask, aspect='auto', cmap = "RdBu")
+plt.text(start[1],start[0], "Lisbon", color = "black", fontfamily="serif", fontsize = "small")
+plt.text(end[1]-10,end[0]+30, "Rio de Janeiro", color = "black", fontfamily="serif", fontsize = "small")
+plt.text(100, 600, "Antlantic Ocean", color = "black", fontfamily="serif", fontsize = "x-large")
+plt.text(1, 200, "South America", color = "black", fontfamily="serif", fontsize = "x-large")
+plt.text(380, 550, "Africa", color = "black", fontfamily="serif", fontsize = "x-large")
+plt.title("Land mask")
+plt.gca().invert_yaxis()
+```
+
+
+![png](imgs/output_28_0.png)
+
+
+
+```python
+wh_costs = wave_height.data
+wd_costs = wave_dir.data
+temp_costs = temp.data
+sal_costs = sal.data
+
+
+# Set NaN values to large wh_costs as the algorithm cannot handle NaNs
+wh_costs[np.isnan(wh_costs)] = np.nanmean(wh_costs) 
+wd_costs[np.isnan(wd_costs)] = np.nanmean(wd_costs) 
+temp_costs[np.isnan(temp_costs)] = np.nanmean(temp_costs) 
+sal_costs[np.isnan(sal_costs)] = np.nanmean(sal_costs) 
+```
+
+
+```python
+# Standardization and normalization of weights
+def stand_and_norm (x):
+    # Standardization
+    x_stand = (x - np.mean(x)) / np.std(x)
+    # Normalization
+    x_norm = (x_stand - np.min(x_stand)) / (np.max(x_stand) - np.min(x_stand))
+    return x_norm
+
+wh_costs = stand_and_norm(wh_costs)
+wd_costs = stand_and_norm(wd_costs)
+temp_costs = stand_and_norm(temp_costs)
+sal_costs = stand_and_norm(sal_costs)
+```
+
+### Calulate costs based on linear regression model
+
+
+```python
+# Weight are taken from linear regression model
+speed = 0.14661334*wh_costs + 0.04047778*wd_costs + 0.13590311*temp_costs + 0.08404383*sal_costs
+
+# invert costs, because costs imitate speed 
+inverted_speed = -1 * speed + np.abs(np.max(speed))
+
+# inverted_speed[inverted_speed == 0] = 2*np.max(inverted_speed)
+```
+
+
+```python
+# assign non-water areas high values
+inverted_speed = inverted_speed.compute()
+inverted_speed[land_mask ==1] = inverted_speed.max()
+
+wh_costs[land_mask ==1] = wh_costs.max()
+wd_costs[land_mask ==1] = wd_costs.max()
+temp_costs[land_mask ==1] = temp_costs.max()
+sal_costs[land_mask ==1] = sal_costs.max()
+```
+
+
+```python
+from skimage.graph import route_through_array
+
+# Calculate optimal route based on the minimum cost path
+
+# Optional parameters:
+# - fully_connected 
+#     - False -> only axial moves are allowed
+#     - True  -> diagonal moves are allowed
+# - geometric 
+#     - False -> minimum cost path
+#     - True  -> distance-weighted minimum cost path
+
+wh_indices, weight = route_through_array(wh_costs, start, end, fully_connected=True, geometric=True)
+wh_indices = np.stack(wh_indices, axis=-1)
+
+wd_indices, weight = route_through_array(wd_costs, start, end, fully_connected=True, geometric=True)
+wd_indices = np.stack(wd_indices, axis=-1)
+
+temp_indices, weight = route_through_array(temp_costs, start, end, fully_connected=True, geometric=True)
+temp_indices = np.stack(temp_indices, axis=-1)
+
+sal_indices, weight = route_through_array(sal_costs, start, end, fully_connected=True, geometric=True)
+sal_indices = np.stack(sal_indices, axis=-1)
+
+merged_indices, weight = route_through_array(inverted_speed, start, end, fully_connected=True, geometric=True)
+merged_indices = np.stack(merged_indices, axis=-1)
+```
+
+
+```python
+# Plot optimal route
+plt.figure(figsize=(10,10))
+
+# Costs
+plt.imshow(inverted_speed, aspect='auto', vmin=np.min(inverted_speed), vmax=np.max(inverted_speed))
+
+# Routes
+plt.plot(wh_indices[1],wh_indices[0], 'red', label = "wave height")
+plt.plot(wd_indices[1],wd_indices[0], 'grey', label = "wave direction")
+plt.plot(temp_indices[1],temp_indices[0], 'orange', label = "temperature")
+plt.plot(sal_indices[1],sal_indices[0], 'cyan', label = "salinity")
+plt.plot(merged_indices[1],merged_indices[0], 'black', label = "wave height + wave dir + temperature + salinity")
+
+# Start/end points
+plt.plot(start_lon, start_lat, 'k^', markersize = 15)
+plt.text(start_lon - 50, start_lat - 10, "Lisbon", color = "white")
+plt.plot(end_lon, end_lat, 'k*', markersize=15)
+plt.text(end_lon + 20, end_lat, "Rio de Janeiro", color = "white")
+plt.title("Linear regression: Optimal routes (minimum cost path) from Lisbon to Rio de Janeiro")
+plt.colorbar(label='Inverted speed over ground')
+plt.legend(loc = "lower right")
+plt.gca().invert_yaxis()
+```
+
+
+![png](imgs/output_35_0.png)
+
+
+### Calulate costs based on random forest model
+
+
+```python
+# retrieve the numpy arrays
+wave_height_np = wh_costs.compute()
+wave_dir_np = wd_costs.compute()
+wave_height_np = temp_costs.compute()
+wave_height_np = sal_costs.compute()
+```
+
+
+```python
+# reshape 2d array to dataframes to apply the random forest
+wave_height_1d = pd.DataFrame(data = wh_costs.compute().ravel())
+wave_dir_1d = pd.DataFrame(data = wd_costs.compute().ravel())
+temp_1d = pd.DataFrame(data = temp_costs.compute().ravel())
+sal_1d = pd.DataFrame(data = sal_costs.compute().ravel())
+
+concat_costs = pd.concat([wave_height_1d,wave_dir_1d,temp_1d,sal_1d], axis = 1)
+concat_costs.columns = ["Wave height","Wave direction","temperature","salinity"]
+
+for_pred = forest_model.predict(concat_costs)
+```
+
+
+```python
+concat_costs
+```
+
+
+
+
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Wave height</th>
+      <th>Wave direction</th>
+      <th>temperature</th>
+      <th>salinity</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>0.722372</td>
+      <td>0.526765</td>
+      <td>0.533536</td>
+      <td>0.931484</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>0.727763</td>
+      <td>0.526876</td>
+      <td>0.556957</td>
+      <td>0.942246</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>0.738544</td>
+      <td>0.527015</td>
+      <td>0.574475</td>
+      <td>0.949598</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>0.746631</td>
+      <td>0.527404</td>
+      <td>0.586709</td>
+      <td>0.954980</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>0.757412</td>
+      <td>0.528154</td>
+      <td>0.588566</td>
+      <td>0.957026</td>
+    </tr>
+    <tr>
+      <th>...</th>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+      <td>...</td>
+    </tr>
+    <tr>
+      <th>1083451</th>
+      <td>0.493448</td>
+      <td>0.368708</td>
+      <td>0.609071</td>
+      <td>0.925393</td>
+    </tr>
+    <tr>
+      <th>1083452</th>
+      <td>0.493448</td>
+      <td>0.368708</td>
+      <td>0.609071</td>
+      <td>0.925393</td>
+    </tr>
+    <tr>
+      <th>1083453</th>
+      <td>0.493448</td>
+      <td>0.368708</td>
+      <td>0.609071</td>
+      <td>0.925393</td>
+    </tr>
+    <tr>
+      <th>1083454</th>
+      <td>0.493448</td>
+      <td>0.368708</td>
+      <td>0.609071</td>
+      <td>0.925393</td>
+    </tr>
+    <tr>
+      <th>1083455</th>
+      <td>0.493448</td>
+      <td>0.368708</td>
+      <td>0.609071</td>
+      <td>0.925393</td>
+    </tr>
+  </tbody>
+</table>
+<p>1083456 rows × 4 columns</p>
+</div>
+
+
+
+
+```python
+# invert costs, because costs imitate speed 
+inverted_speed_forest = -1 * for_pred + np.abs(np.max(for_pred))
+```
+
+
+```python
+# reshape speed costs to get back the map
+rf_speed = np.reshape(inverted_speed_forest,wave_height_np.shape)
+```
+
+
+```python
+# assign non-water areas high values
+rf_speed[land_mask ==1] = np.max(rf_speed)
+```
+
+
+```python
+# compute route
+rf_indices, weight = route_through_array(rf_speed, start, end, fully_connected=True, geometric=True)
+rf_indices = np.stack(rf_indices, axis=-1)
+```
+
+
+```python
+# Plot optimal route
+plt.figure(figsize=(10,10))
+
+# Costs
+plt.imshow(rf_speed, aspect='auto')
+
+plt.plot(rf_indices[1],rf_indices[0], 'red', label = "fastest route from Lisbon to Rio", lw = 2)
+
+# Start/end points
+plt.plot(start_lon, start_lat, 'k^', markersize = 15, color = "white")
+plt.text(start_lon - 50, start_lat - 10, "Lisbon", color = "white")
+plt.plot(end_lon, end_lat, 'k*', markersize=15)
+plt.text(end_lon + 20, end_lat, "Rio de Janeiro")
+plt.title("Random forest")
+plt.legend(loc = "lower right")
+plt.colorbar(label='Inverted speed over ground')
+plt.gca().invert_yaxis()
+```
+
+
+![png](imgs/output_44_0.png)
+
+
+## Advanced solution: Calculate optimal route (minimum cost path) based on *multiple* variables and *multiple* days
+
+
+```python
+# Show times for WAV
+time = phy_all.sel(time=~phy_all.get_index("time").duplicated()).time
+
+rows = []
+
+for step in range(time.size):
+    
+    time_df_phy = str(time.values[step])
+    rows.append([step, time_df_phy])
+
+time_df_phy = pd.DataFrame(rows, columns = ['Step', 'Time'])
+```
+
+
+```python
+# Show times for PHY
+time = wav_all.sel(time=~wav_all.get_index("time").duplicated()).time
+
+rows = []
+
+for step in range(time.size):
+    
+    time_df_wav = str(time.values[step])
+    rows.append([step, time_df_wav])
+
+time_df_wav = pd.DataFrame(rows, columns = ['Step', 'Time'])
+```
+
+
+```python
+# Get the times that exist in both datasets (12:00:00 for the three days)
+common_time = np.intersect1d(time_df_wav['Time'], time_df_phy['Time'])
+
+# Create arrays with the corresponding steps
+# For waves forecast, this is: [3, 11, 19, 27]
+# For physics forecast, this is: [0, 1, 2, 3]
+time_wav = []
+time_phy = []
+
+for t in range(common_time.size):
+    time_wav.append(int(time_df_wav['Step'].loc[time_df_wav['Time'] == common_time[t]]))
+    time_phy.append(int(time_df_phy['Step'].loc[time_df_phy['Time'] == common_time[t]]))
+
+# Create time slices (start, end, step)
+step_wav = time_wav[1] - time_wav[0]
+time_slice_wav = slice(min(time_wav), max(time_wav) + 1, step_wav)
+step_phy = time_phy[1] - time_phy[0]
+time_slice_phy = slice(min(time_phy), max(time_phy) + 1, step_phy)
+```
+
+
+```python
+# Extract array from dataset to define the cost in the routing algorithm with a new time_slice
+# Wave height
+wave_height = wav_all.VHM0.isel(time=time_slice_wav, longitude=slice(lon_min, lon_max), latitude=slice(lat_min, lat_max))
+
+# Wave direction
+wave_dir = wav_all.VMDR.isel(time=time_slice_wav, longitude=slice(lon_min, lon_max), latitude=slice(lat_min, lat_max))
+
+# Temperature
+temp = phy_all.thetao.isel(time=time_slice_phy, longitude=slice(lon_min, lon_max), latitude=slice(lat_min, lat_max), depth = 0)
+
+# Salinity
+sal = phy_all.so.isel(time=time_slice_phy, longitude=slice(lon_min, lon_max), latitude=slice(lat_min, lat_max), depth = 0)
+```
+
+
+```python
+# Calculate multidimensional costs
+wh_costs = wave_height
+wh_costs = wh_costs.fillna(np.nanmean(wh_costs))
+wh_costs = stand_and_norm(wh_costs)
+
+wd_costs = wave_dir
+wd_costs = wd_costs.fillna(np.nanmean(wd_costs))
+wd_costs = stand_and_norm(wd_costs)
+
+temp_costs = temp
+temp_costs = temp_costs.fillna(np.nanmean(temp_costs))
+temp_costs = temp_costs.reindex(latitude = wh_costs.latitude, method='nearest', tolerance=123).reindex(longitude = wh_costs.longitude, method='nearest', tolerance=123)
+temp_costs = stand_and_norm(temp_costs)
+
+sal_costs = sal
+sal_costs = sal_costs.fillna(np.nanmean(sal_costs))
+sal_costs = sal_costs.reindex(latitude = wh_costs.latitude, method='nearest', tolerance=123).reindex(longitude = wh_costs.longitude, method='nearest', tolerance=123)
+sal_costs = stand_and_norm(sal_costs)
+# Cost calulation using linear regression
+# costs = 0.14661334 * wh_costs + 0.04047778 * wd_costs + 0.13590311 * temp_costs + 0.08404383 * sal_costs
+# costs
+```
+
+
+```python
+# reshape 2d array to dataframes to apply the random forest
+wave_height_1d = pd.DataFrame(data = wh_costs.values.flatten())
+wave_dir_1d = pd.DataFrame(data = wd_costs.values.flatten())
+temp_1d = pd.DataFrame(data = temp_costs.values.flatten())
+sal_1d = pd.DataFrame(data = sal_costs.values.flatten())
+
+concat_costs = pd.concat([wave_height_1d,wave_dir_1d,temp_1d,sal_1d], axis = 1)
+concat_costs.columns = ["Wave height","Wave direction","temperature","salinity"]
+
+# predict speed using random forest model
+costs = forest_model.predict(concat_costs)
+```
+
+
+```python
+# reshape speed costs to get back the map
+costs = np.reshape(costs,wh_costs.shape)
+```
+
+
+```python
+# Sum costs for all timesteps
+costs_all_times = (costs[0]+costs[1]+costs[2])/3
+#costs_all_times = costs.sum(dim = 'time')
+```
+
+
+```python
+# Get data for specific timestep
+costs_day_1 = costs[0]
+costs_day_2 = costs[1]
+costs_day_3 = costs[2]
+```
+
+
+```python
+# assign max values for land areas
+costs_day_1[land_mask == 1] = costs_day_1.max()
+costs_day_2[land_mask == 1] = costs_day_2.max()
+costs_day_3[land_mask == 1] = costs_day_3.max()
+```
+
+
+```python
+# assign non-water areas high values
+costs_all_times[land_mask ==1] = costs_all_times.max()
+```
+
+
+```python
+# Calculate optimal route for all days
+merged_indices_all_times, weight = route_through_array(costs_all_times, start, end, fully_connected=True, geometric=False)
+merged_indices_all_times = np.stack(merged_indices_all_times, axis=-1)
+
+# Calculate optimal route for day one
+merged_indices_day_one, weight = route_through_array(costs_day_1, start, end, fully_connected=True, geometric=False)
+merged_indices_day_one = np.stack(merged_indices_day_one, axis=-1)
+
+# Calculate optimal route for day two
+merged_indices_day_two, weight = route_through_array(costs_day_2, start, end, fully_connected=True, geometric=False)
+merged_indices_day_two = np.stack(merged_indices_day_two, axis=-1)
+
+# Calculate optimal route for day three
+merged_indices_day_three, weight = route_through_array(costs_day_3, start, end, fully_connected=True, geometric=False)
+merged_indices_day_three = np.stack(merged_indices_day_three, axis=-1)
+```
+
+
+```python
+# Plot optimal route
+plt.figure(figsize=(10,10))
+
+# Costs
+plt.imshow(costs_all_times, aspect='auto')
+
+# Routes
+plt.plot(merged_indices_day_one[1], merged_indices_day_one[0], 'yellow', label = "Day 1")
+plt.plot(merged_indices_day_two[1], merged_indices_day_two[0], 'black', label = "Day 2")
+plt.plot(merged_indices_day_three[1], merged_indices_day_three[0], 'magenta', label = "Day 3")
+plt.plot(merged_indices_all_times[1], merged_indices_all_times[0], 'red', label = "All days")
+
+# Start/end points
+plt.plot(start_lon, start_lat, 'k^', markersize = 15)
+plt.text(start_lon - 50, start_lat - 10, "Lisbon", color = "white")
+plt.plot(end_lon, end_lat, 'k*', markersize = 15)
+plt.text(end_lon + 20, end_lat, "Rio de Janeiro")
+plt.title("Optimal routes (minimum cost path) from Lisbon to Rio de Janeiro based on RF")
+plt.colorbar(label='Inverted speed over ground all days')
+plt.legend(loc = "lower right")
+plt.gca().invert_yaxis()
+```
+
+
+![png](imgs/output_58_0.png)
+
+
+## Costs get updated per day according to euclidean distance to start point
+
+
+```python
+# Find indices that can be reached within one day
+# @see: https://stackoverflow.com/questions/52920499/find-all-points-within-distance-1-of-specific-point-in-2d-numpy-matrix
+# set up matrix
+day_one_mask = np.zeros(wave_height.data[0].shape) 
+day_two_mask = np.zeros(wave_height.data[0].shape)
+day_three_mask = np.zeros(wave_height.data[0].shape)
+
+# convert to python scalars
+r = start[0]
+c = start[1]
+# get boundaries of array
+m, n = day_one_mask.shape
+
+# set this value to a distance that the ship can reach within one day
+dist_per_day = 300
+# loop over possible locations
+for i in range(0-r,m): 
+    for j in range(0-c,n): 
+        # check if location is within boundary
+        if (0 <= r + i < m and 0 <= c + j < n):
+            if np.linalg.norm([r+i,c+j] - np.array(start))<dist_per_day:
+                day_one_mask[r+i,c+j] = 1
+            elif np.linalg.norm([r+i,c+j] - np.array(start))>=dist_per_day and np.linalg.norm([r+i,c+j] - np.array(start))<2*dist_per_day:
+                day_two_mask[r+i,c+j] = 1
+            else:
+                day_three_mask[r+i,c+j] = 1
+```
+
+
+```python
+# Plot optimal route
+plt.figure(figsize=(5,10))
+
+# Costs
+plt.imshow(day_one_mask, aspect='auto')
+plt.title("Day one mask")
+plt.gca().invert_yaxis()
+
+# Plot optimal route
+plt.figure(figsize=(5,5))
+
+# Costs
+plt.imshow(day_two_mask, aspect='auto')
+plt.title("Day two mask")
+plt.gca().invert_yaxis()
+
+# Plot optimal route
+plt.figure(figsize=(5,5))
+
+# Costs
+plt.imshow(day_three_mask, aspect='auto')
+plt.title("Day three mask")
+plt.gca().invert_yaxis()
+```
+
+
+![png](imgs/output_61_0.png)
+
+
+
+![png](imgs/output_61_1.png)
+
+
+
+![png](imgs/output_61_2.png)
+
+
+
+```python
+costs_ecd = np.zeros(costs[1].shape)
+```
+
+
+```python
+costs_ecd[day_one_mask == 1] = costs[0][day_one_mask == 1]
+costs_ecd[day_two_mask == 1] = costs[1][day_two_mask == 1]
+costs_ecd[day_three_mask == 1] = costs[2][day_three_mask == 1]
+```
+
+
+```python
+# Calculate optimal route for all days
+indices_ecd_costs, weight = route_through_array(costs_ecd, start, end, fully_connected=True, geometric=False)
+indices_ecd_costs = np.stack(indices_ecd_costs, axis=-1)
+```
+
+
+```python
+# Plot optimal route
+plt.figure(figsize=(6,6))
+# Costs
+plt.imshow(costs[0], aspect='auto')
+plt.title("RF: Speed costs day one")
+plt.gca().invert_yaxis()
+
+plt.figure(figsize=(6,6))
+plt.imshow(costs[1], aspect='auto')
+plt.title("RF: Speed costs day two")
+plt.gca().invert_yaxis()
+
+plt.figure(figsize=(6,6))
+plt.imshow(costs[2], aspect='auto')
+plt.title("RF: Speed costs day three")
+plt.gca().invert_yaxis()
+```
+
+
+![png](imgs/output_65_0.png)
+
+
+
+![png](imgs/output_65_1.png)
+
+
+
+![png](imgs/output_65_2.png)
+
+
+
+```python
+
+# Plot optimal route
+plt.figure(figsize=(5,10))
+
+# Costs
+plt.imshow(costs_ecd, aspect='auto')
+
+plt.plot(indices_ecd_costs[1],indices_ecd_costs[0], 'red', label = "Costs splitted up in different forecast products (ECD)", lw = 2)
+plt.plot(merged_indices_all_times[1], merged_indices_all_times[0], 'cyan', label = "Mean of all days at each cell")
+plt.plot(merged_indices_day_one[1], merged_indices_day_one[0], 'orange', label = "Costs of day 1")
+
+# Start/end points
+plt.plot(start_lon, start_lat, 'k^', markersize = 15, color = "white")
+plt.text(start_lon - 50, start_lat - 10, "Lisbon", color = "white")
+plt.plot(end_lon, end_lat, 'k*', markersize=15)
+plt.text(end_lon + 20, end_lat, "Rio de Janeiro")
+plt.title("Random forest, underlying forecsasts differ depending on euclidean distance to Lisbon")
+plt.legend(loc = "lower right")
+plt.colorbar(label='Inverted speed over ground')
+plt.gca().invert_yaxis()
+```
+
+
+![png](imgs/output_66_0.png)
+
+
+# TODO (for the last two week):
+- add more weather forecasts?
+- improve advanced solution? or leave it like it is?
+- **comparison study**
+- *add variables (**Wave period, layer thickness**, (wind speed, wind angle, gross tonnage)*
+- prepare final presentation
+
+## Comparison study regarding
+
+|parameter|simple routing (single day)|advanced routing (multiple days)|
+---| --- | ---
+|applicability| - | - |
+|constraints| does not consider weather changes along the route | - |
+|performance| - | - |
+|energy demand| acceptable (~3GB) | needs much storing capacity for weather forecasts (>10GB) |
+
+
+### References
+* https://levelup.gitconnected.com/dijkstras-shortest-path-algorithm-in-a-grid-eb505eb3a290
+* https://gist.github.com/mdsrosa/c71339cb23b <-- (Page not found..)
