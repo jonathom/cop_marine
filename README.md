@@ -2368,15 +2368,16 @@ plt.gca().invert_yaxis()
 - *add variables (**Wave period, layer thickness**, (wind speed, wind angle, gross tonnage)*
 - prepare final presentation
 
-## Comparison study regarding
+# Comparison of Simple and Advanced Routing
 
 |parameter|simple routing (single day)|advanced routing (multiple days)|
 ---| --- | ---
-|applicability| - | - |
-|constraints| does not consider weather changes along the route | - |
-|performance| - | - |
-|energy demand| acceptable (~3GB) | needs much storing capacity for weather forecasts (>10GB) |
-
+| methods | linear model, single ocean variables and combined ocean variables, considering a single day of forecast weather data | random forest model, ocean variables combined, considering multiple (3) days of forecast weather data |
+|constraints| assuming constant speed, calculated cost does not refer to the actual cost but to the possible speed, linear model doesn't fit data well. Does not consider weather changes along the route | assuming constant speed, calculated cost does not refer to the actual cost but to the possible speed, "radius" technique of updating the routing raster to combine timesteps only possible under strong assumptions, including more forecast days means much more data storage needed |
+|performance| cost of the route, model errors? | cost of the route, model errors? |
+|energy demand| most energy needed for preprocessing, storing needs acceptable (~3GB) | most energy needed for preprocessing, needs much storing capacity for weather forecasts (>10GB) |
+|applicability| for short routes with little margin for maneuver. single variables have huge differences in indications for routing between them -> should really always be combined. combined variables show ok results | confident routing for complicated and long routes, route planning. shows that updating weather data is much different from combining forecast days (e.g. by mean) |
+| potential | By leaning into the "simple and lightweight" approach, this system could be useful for e.g. planning day-long boat trips  | This system has the potential to be useful in real cargoship routing. With a) real seakeeping and fuel consumption data and b) a real 3D routing algorithm that works on multiple timesteps under the applicable constraints, a useful system for long distance ocean routing could be made  |
 
 ### References
 * https://levelup.gitconnected.com/dijkstras-shortest-path-algorithm-in-a-grid-eb505eb3a290
