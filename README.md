@@ -2379,6 +2379,15 @@ plt.gca().invert_yaxis()
 |applicability| for short routes with little margin for maneuver. single variables have huge differences in indications for routing between them -> should really always be combined. combined variables show ok results | confident routing for complicated and long routes, route planning. shows that updating weather data is much different from combining forecast days (e.g. by mean) |
 | potential | By leaning into the "simple and lightweight" approach, this system could be useful for e.g. planning day-long boat trips  | This system has the potential to be useful in real cargoship routing. With a) real seakeeping and fuel consumption data and b) a real 3D routing algorithm that works on multiple timesteps under the applicable constraints, a useful system for long distance ocean routing could be made  |
 
+## Cost comparison (rounded)
+
+| One day (RF)| All days mean (RF)| All days splitted (RF)|
+| ----------- | ----------- | ----------- |
+| 1 | 1.02 | 0.95 |
+
+
+-> splitting the route is 5% faster than just one day
+
 ### References
 * https://levelup.gitconnected.com/dijkstras-shortest-path-algorithm-in-a-grid-eb505eb3a290
 * https://gist.github.com/mdsrosa/c71339cb23b <-- (Page not found..)
