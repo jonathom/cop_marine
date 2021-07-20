@@ -45,6 +45,3 @@ To execute the comparison follow these steps:
 
 
 -> splitting the route is 5% faster than considering just one day, however this comparison of total costs is fuzzy
-
-### References
-* https://levelup.gitconnected.com/dijkstras-shortest-path-algorithm-in-a-grid-eb505eb3a290
